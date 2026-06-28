@@ -1,0 +1,59 @@
+name: Flutter Release
+
+# Reusable Play Store release. Callers keep their own tag + workflow_dispatch
+# triggers and pass `secrets: inherit` (each app holds its own 5 secrets).
+# `just check` runs in a SEPARATE step before any signing/Play secrets are in
+# scope, so codegen/tests never see the keystore passwords or service-account
+# key. Defaults publish to the internal track as completed.
+on:
+  workflow_call:
+    inputs:
+      track:
+        description: "Play Store track (internal | alpha | beta | production)"
+        type: string
+        default: "internal"
+      release-status:
+        description: "Play release status (draft | completed)"
+        type: string
+        default: "completed"
+    secrets:
+      KEYSTORE_BASE64:
+        required: true
+      STORE_PASSWORD:
+        required: true
+      KEY_ALIAS:
+        required: true
+      KEY_PASSWORD:
+        required: true
+      PLAY_STORE_JSON_KEY:
+        required: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - uses: stuart-bradley/ci-shared/.github/actions/setup-flutter@v1
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@a99ac844649df2596b52b4db087cfa0881b172af # v1.311.0
+        with:
+          ruby-version: "3.3"
+          bundler-cache: true
+          working-directory: android
+
+      # Verification runs WITHOUT the signing/Play secrets in scope.
+      - name: Verify
+        run: just check
+
+      - name: Sign, build, and deploy
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          PLAY_STORE_JSON_KEY: ${{ secrets.PLAY_STORE_JSON_KEY }}
+          PLAY_STORE_TRACK: ${{ inputs.track }}
+          PLAY_STORE_RELEASE_STATUS: ${{ inputs.release-status }}
+        run: just release-ci

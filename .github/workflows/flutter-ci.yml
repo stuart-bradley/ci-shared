@@ -1,0 +1,31 @@
+name: Flutter CI
+
+# Reusable CI for the Flutter apps: lint shell scripts, run `just check`
+# (codegen + analyze + format-check + unit/widget tests), and optionally a
+# debug-APK smoke build. Callers keep their own push/pull_request triggers and
+# concurrency.
+on:
+  workflow_call:
+    inputs:
+      smoke-build:
+        description: "Run `just build-debug` after check (Android compile smoke test)"
+        type: boolean
+        default: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - uses: stuart-bradley/ci-shared/.github/actions/setup-flutter@v1
+
+      - name: Lint scripts
+        run: just lint-scripts
+
+      - name: Check
+        run: just check
+
+      - name: Smoke build (debug APK)
+        if: inputs.smoke-build
+        run: just build-debug
