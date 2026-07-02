@@ -123,20 +123,15 @@ jobs:
           disk-size: ${{ inputs.disk-size }}
           emulator-options: -no-snapshot-load -no-snapshot-save -no-window -gpu swiftshader_indirect -memory 4096 -noaudio -no-boot-anim
           disable-animations: true
-          # Read the exit code WITHOUT a pipe (pipefail/PIPESTATUS aren't portable
-          # across the action's shell; a mis-read exit could mask a real failure).
-          # Leave e2e-output.txt in the workspace for the classify step, and dump
-          # logcat on failure. NOTE: $GITHUB_OUTPUT does NOT propagate from inside
-          # the emulator-runner script (its subprocess can't set the step output),
-          # so infra classification happens in the next (normal) run step instead.
-          script: |
-            just e2e > e2e-output.txt 2>&1
-            rc=$?
-            cat e2e-output.txt
-            if [ "$rc" -ne 0 ]; then
-              adb logcat -d > emulator-logcat.txt 2>&1 || true
-            fi
-            exit $rc
+          # MUST be ONE line: the emulator-runner runs `script` one line per
+          # `sh -c`, so a multi-line block loses `rc` across shells and splits
+          # `if/fi` (`sh: Syntax error ... expecting "fi"`, exit 2) even when all
+          # tests pass. No pipe either (pipefail/PIPESTATUS aren't portable; a
+          # mis-read exit could mask a real failure). Leaves e2e-output.txt in the
+          # workspace for the classify step and dumps logcat on failure via `||`.
+          # $GITHUB_OUTPUT can't be set from here (subprocess), so infra
+          # classification happens in the next (normal) run step.
+          script: just e2e > e2e-output.txt 2>&1; rc=$?; cat e2e-output.txt; [ "$rc" -eq 0 ] || adb logcat -d > emulator-logcat.txt 2>&1; exit "$rc"
 
       # Classify attempt 1's failure in a NORMAL run step, where $GITHUB_OUTPUT
       # actually sets a step output (it can't from inside the emulator-runner
@@ -180,14 +175,7 @@ jobs:
           disk-size: ${{ inputs.disk-size }}
           emulator-options: -no-snapshot-load -no-snapshot-save -no-window -gpu swiftshader_indirect -memory 4096 -noaudio -no-boot-anim
           disable-animations: true
-          script: |
-            just e2e > e2e-output.txt 2>&1
-            rc=$?
-            cat e2e-output.txt
-            if [ "$rc" -ne 0 ]; then
-              adb logcat -d > emulator-logcat.txt 2>&1 || true
-            fi
-            exit $rc
+          script: just e2e > e2e-output.txt 2>&1; rc=$?; cat e2e-output.txt; [ "$rc" -eq 0 ] || adb logcat -d > emulator-logcat.txt 2>&1; exit "$rc"
 
       # Upload both attempts' diagnostics (the retry overwrites the files, so this
       # holds the last/most-relevant failure). always() so a pass and a failing
