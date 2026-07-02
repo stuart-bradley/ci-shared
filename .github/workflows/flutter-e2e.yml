@@ -117,29 +117,44 @@ jobs:
           disable-animations: true
           # Read the exit code WITHOUT a pipe (pipefail/PIPESTATUS aren't portable
           # across the action's shell; a mis-read exit could mask a real failure).
-          # Capture output + logcat for the artifact, and on a nonzero exit flag
-          # the infra signature as retryable: emulator-killed ("Failed: 0"), a
-          # GPU-degraded visibility "TimeoutException", or "Failed to find
-          # ColorBuffer" (rare in captured output — it mostly prints to the
-          # emulator host stderr / action log). A genuine assertion mismatch bears
-          # none, so it leaves the flag unset and fails fast.
+          # Leave e2e-output.txt in the workspace for the classify step, and dump
+          # logcat on failure. NOTE: $GITHUB_OUTPUT does NOT propagate from inside
+          # the emulator-runner script (its subprocess can't set the step output),
+          # so infra classification happens in the next (normal) run step instead.
           script: |
             just e2e > e2e-output.txt 2>&1
             rc=$?
             cat e2e-output.txt
             if [ "$rc" -ne 0 ]; then
               adb logcat -d > emulator-logcat.txt 2>&1 || true
-              if grep -qE 'Failed: 0|TimeoutException|Failed to find ColorBuffer' e2e-output.txt; then
-                echo "infra=true" >> "$GITHUB_OUTPUT"
-              fi
             fi
             exit $rc
 
+      # Classify attempt 1's failure in a NORMAL run step, where $GITHUB_OUTPUT
+      # actually sets a step output (it can't from inside the emulator-runner
+      # script above). Reads the e2e-output.txt attempt 1 left in the workspace.
+      # Infra signature = emulator-killed ("Failed: 0" plus the nonzero exit that
+      # got us here), a GPU-degraded visibility "TimeoutException", or "Failed to
+      # find ColorBuffer" (rare in captured output — it mostly prints to the
+      # emulator host stderr / action log). A genuine assertion mismatch bears
+      # none of these, so infra stays unset and the job fails fast.
+      - name: Classify attempt 1 failure
+        id: classify
+        if: steps.e2e1.outcome == 'failure'
+        run: |
+          if grep -qE 'Failed: 0|TimeoutException|Failed to find ColorBuffer' e2e-output.txt; then
+            echo "infra=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::E2E attempt 1 hit an emulator infra crash — retrying once on a fresh emulator."
+          else
+            echo "No infra signature in attempt 1 output — real failure, no retry."
+          fi
+
       # Retry ONCE, on a fresh emulator, only when attempt 1 died from the infra
-      # signature (not a real test failure). Emulator config MUST match attempt 1.
+      # signature (classify only runs on an attempt-1 failure). Emulator config
+      # MUST match attempt 1.
       - name: Run E2E tests (retry after infra crash)
         id: e2e2
-        if: steps.e2e1.outcome == 'failure' && steps.e2e1.outputs.infra == 'true'
+        if: steps.classify.outputs.infra == 'true'
         continue-on-error: true
         uses: reactivecircus/android-emulator-runner@e89f39f1abbbd05b1113a29cf4db69e7540cae5a # v2.37.0
         with:
@@ -188,5 +203,5 @@ jobs:
             echo "E2E passed (attempt1=$a1, attempt2=${a2:-skipped})"
             exit 0
           fi
-          echo "E2E failed (attempt1=$a1, infra=${{ steps.e2e1.outputs.infra }}, attempt2=${a2:-skipped})"
+          echo "E2E failed (attempt1=$a1, infra=${{ steps.classify.outputs.infra }}, attempt2=${a2:-skipped})"
           exit 1
