@@ -89,15 +89,17 @@ jobs:
       #
       # RETRY-ON-INFRA-CRASH (attempt -> conditional retry -> gate). The
       # swiftshader GPU translator can die mid-run ("Failed to find ColorBuffer"),
-      # killing the emulator: patrol then reports zero assertion failures
-      # ("Failed: 0") yet the process still exits nonzero, so a green suite is
-      # failed by dead infra and it can strike any PR. We retry ONCE on a fresh
-      # emulator, but ONLY on that infra signature (nonzero exit AND patrol
-      # "Failed: 0") — a REAL test failure (Failed: N>=1, or a build/compile error
-      # with no patrol summary) leaves the flag unset, so the retry is skipped and
-      # the job fails fast without a masking re-run. The two runner steps must
-      # keep IDENTICAL emulator config (GitHub Actions has no YAML anchors). A
-      # retry roughly doubles worst-case wall time, so callers should size
+      # which either kills the emulator (patrol reports "Failed: 0" yet exits
+      # nonzero) or degrades it so a widget wait times out (a visibility
+      # TimeoutException surfacing as Failed: N). Either way a green suite is
+      # failed by dead/degraded infra and it can strike any PR on any of the three
+      # apps. We retry ONCE on a fresh emulator when attempt 1's captured output
+      # bears that infra signature (Failed: 0, TimeoutException, or ColorBuffer).
+      # A genuine assertion mismatch bears none of those, so it skips the retry and
+      # fails fast — the re-run can't mask it (and a deterministic timeout-shaped
+      # bug recurs on the single retry anyway). The two runner steps must keep
+      # IDENTICAL emulator config (GitHub Actions has no YAML anchors). A retry
+      # roughly doubles worst-case wall time, so callers should size
       # timeout-minutes to fit one retry (well-quill uses 30).
       - name: Run E2E tests (attempt 1)
         id: e2e1
@@ -116,14 +118,18 @@ jobs:
           # Read the exit code WITHOUT a pipe (pipefail/PIPESTATUS aren't portable
           # across the action's shell; a mis-read exit could mask a real failure).
           # Capture output + logcat for the artifact, and on a nonzero exit flag
-          # the infra signature (patrol logged zero failures) as retryable.
+          # the infra signature as retryable: emulator-killed ("Failed: 0"), a
+          # GPU-degraded visibility "TimeoutException", or "Failed to find
+          # ColorBuffer" (rare in captured output — it mostly prints to the
+          # emulator host stderr / action log). A genuine assertion mismatch bears
+          # none, so it leaves the flag unset and fails fast.
           script: |
             just e2e > e2e-output.txt 2>&1
             rc=$?
             cat e2e-output.txt
             if [ "$rc" -ne 0 ]; then
               adb logcat -d > emulator-logcat.txt 2>&1 || true
-              if grep -q 'Failed: 0' e2e-output.txt; then
+              if grep -qE 'Failed: 0|TimeoutException|Failed to find ColorBuffer' e2e-output.txt; then
                 echo "infra=true" >> "$GITHUB_OUTPUT"
               fi
             fi
