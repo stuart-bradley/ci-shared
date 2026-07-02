@@ -78,7 +78,7 @@ jobs:
           path: |
             ~/.android/avd/*
             ~/.android/adb*
-          key: avd-api${{ inputs.api-level }}-x86_64-${{ inputs.disk-size }}-${{ runner.os }}
+          key: avd-api${{ inputs.api-level }}-x86_64-${{ inputs.disk-size }}-emu11237101-${{ runner.os }}
 
       # Single emulator boot per attempt. Cold boot (-no-snapshot-load
       # -no-snapshot-save): no RAM snapshot is saved/cached, so a run can't hit
@@ -110,6 +110,11 @@ jobs:
         uses: reactivecircus/android-emulator-runner@e89f39f1abbbd05b1113a29cf4db69e7540cae5a # v2.37.0
         with:
           api-level: ${{ inputs.api-level }}
+          # Pin emulator 33.1.24.0 (build 11237101). Recent builds (36.x) hit
+          # "Failed to find ColorBuffer" fatally on ~every headless run; the
+          # documented fix is this downgrade (#64 bucket A). Both runner steps
+          # MUST keep the same build.
+          emulator-build: "11237101"
           target: google_apis
           arch: x86_64
           profile: pixel_6
@@ -162,6 +167,11 @@ jobs:
         uses: reactivecircus/android-emulator-runner@e89f39f1abbbd05b1113a29cf4db69e7540cae5a # v2.37.0
         with:
           api-level: ${{ inputs.api-level }}
+          # Pin emulator 33.1.24.0 (build 11237101). Recent builds (36.x) hit
+          # "Failed to find ColorBuffer" fatally on ~every headless run; the
+          # documented fix is this downgrade (#64 bucket A). Both runner steps
+          # MUST keep the same build.
+          emulator-build: "11237101"
           target: google_apis
           arch: x86_64
           profile: pixel_6
