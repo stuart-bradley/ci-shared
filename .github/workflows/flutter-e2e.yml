@@ -23,6 +23,10 @@ on:
         description: "Job timeout (ceiling; only bills when a job hangs)"
         type: number
         default: 20
+      flutter-version:
+        description: "Exact Flutter version to pin (empty = latest stable)"
+        type: string
+        default: ""
 
 jobs:
   e2e:
@@ -33,6 +37,8 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - uses: stuart-bradley/ci-shared/.github/actions/setup-flutter@v1
+        with:
+          flutter-version: ${{ inputs.flutter-version }}
 
       - name: Install patrol_cli
         if: inputs.install-patrol

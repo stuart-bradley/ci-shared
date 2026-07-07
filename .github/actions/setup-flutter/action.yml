@@ -5,12 +5,24 @@ description: Install Flutter, Just, cache Gradle, and pub get
 # (CI + release) already runs it, so running it here too would double-run
 # build_runner. Workflows that build without `just check` (e2e) run
 # `just codegen` explicitly.
+inputs:
+  flutter-version:
+    description: >-
+      Exact Flutter version to pin (e.g. "3.44.0"). Empty (default) tracks the
+      latest stable. Pin it when a new stable regresses the Android/Gradle build
+      — unpinned stable auto-updates on the runner and has broken e2e/release
+      (e.g. the "compileFlutterBuildDebug not found" Gradle regression).
+    required: false
+    default: ""
+
 runs:
   using: composite
   steps:
     - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
       with:
         channel: stable
+        # Empty ⇒ subosito treats it as unset and uses the channel's latest.
+        flutter-version: ${{ inputs.flutter-version }}
         cache: true
 
     - name: Install Just
