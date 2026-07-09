@@ -1,8 +1,8 @@
 # ci-shared
 
 Shared GitHub Actions CI for the Flutter apps (cog-scroll, tasks-on-time,
-well-quill). One composite action + three reusable workflows so an optimisation
-made here reaches every app.
+well-quill, watch-nook). One composite action + four reusable workflows so an
+optimisation made here reaches every app.
 
 ## Consuming
 
@@ -29,7 +29,7 @@ jobs:
       install-patrol: false     # true for Patrol apps
       timeout-minutes: 20
 
-# .github/workflows/release.yml
+# .github/workflows/release.yml — Play Store deploy (AAB)
 jobs:
   deploy:
     uses: stuart-bradley/ci-shared/.github/workflows/flutter-release.yml@v1
@@ -37,10 +37,21 @@ jobs:
       track: ${{ inputs.track || 'internal' }}
       release-status: ${{ inputs.release_status || 'completed' }}
     secrets: inherit            # passes the app's 5 signing/Play secrets
+
+# ...or GitHub-Releases APK instead of Play (tag vX.Y.Z -> signed APK on the Release)
+jobs:
+  release-apk:
+    permissions:
+      contents: write           # create the Release + upload the APK
+    uses: stuart-bradley/ci-shared/.github/workflows/flutter-release-apk.yml@v1
+    with:
+      flutter-version: "3.44.0"
+    secrets: inherit            # 4 signing + 2 TMDB secrets
 ```
 
-Each consuming app must expose these `just` recipes: `lint-scripts`, `check`,
-`codegen`, `build-debug`, `e2e`, `release-ci`.
+Each consuming app must expose the `just` recipes its chosen workflows call:
+`lint-scripts`, `check`, `codegen`, `build-debug`, `e2e`, plus `release-ci`
+(Play deploy) or `release-apk-ci` (GitHub-Releases APK).
 
 ## Contract
 
@@ -49,6 +60,7 @@ Each consuming app must expose these `just` recipes: `lint-scripts`, `check`,
 | `flutter-ci` | `smoke-build` (bool, false) | — |
 | `flutter-e2e` | `api-level` (31), `disk-size` ("2G"), `install-patrol` (false), `timeout-minutes` (20) | — |
 | `flutter-release` | `track` ("internal"), `release-status` ("completed") | `KEYSTORE_BASE64`, `STORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`, `PLAY_STORE_JSON_KEY` |
+| `flutter-release-apk` | `flutter-version` ("") | `KEYSTORE_BASE64`, `STORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`, `TMDB_API_KEY`, `TMDB_READ_TOKEN` (caller grants `contents: write`) |
 
 Private cross-repo access is enabled on this repo
 (`actions/permissions/access` = `user`) so same-owner apps can reference it.
