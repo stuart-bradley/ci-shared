@@ -38,7 +38,11 @@ while IFS= read -r name; do
   # Is it named by a Dart string literal? Match the *whole* literal — as
   # 'ic_foo' or '@drawable/ic_foo' — never a substring, or a resource called
   # `background` would match any Dart string containing that word.
-  grep -rqE "'(@(drawable|mipmap)/)?${name}'" lib || continue
+  #
+  # Both quote styles: `prefer_single_quotes` makes double quotes unlikely, but a
+  # lint convention is not something a safety gate should depend on — a
+  # double-quoted name would otherwise sail straight through unnoticed.
+  grep -rqE "['\"](@(drawable|mipmap)/)?${name}['\"]" lib || continue
 
   checked=$((checked + 1))
 
