@@ -64,3 +64,26 @@ Each consuming app must expose the `just` recipes its chosen workflows call:
 
 Private cross-repo access is enabled on this repo
 (`actions/permissions/access` = `user`) so same-owner apps can reference it.
+
+## The R8 resource check (`flutter-ci`)
+
+`flutter-ci` runs a static check that every Android resource **named only from a
+Dart string** is pinned in `android/app/src/main/res/raw/keep.xml`.
+
+R8 resource shrinking runs on Flutter **release** builds and never on debug. It
+keeps a resource only if it can *see* a reference — manifest, XML, Kotlin/Java. A
+notification small icon that Dart passes to `flutter_local_notifications` as a
+string is resolved at runtime via `Resources.getIdentifier(...)`, which the
+shrinker cannot see, so it strips it and the plugin throws
+`PlatformException(invalid_icon)` on every call.
+
+**The failure exists only in the shipped artifact.** `just check`, `flutter run`,
+the emulator and every widget test are green, because none of them builds a
+shrunk APK. This has bitten two apps — well-quill, then cog-scroll, where it
+survived three "verified on an emulator" fix attempts and killed the daily
+reminder in production.
+
+So: add a Dart-referenced drawable ⇒ add it to `keep.xml` in the same change.
+The check is static (no build, seconds) and tells you exactly what to add. A
+resource the manifest or an XML already anchors (e.g. `@mipmap/ic_launcher`) needs
+no entry — the shrinker can see those on its own.
