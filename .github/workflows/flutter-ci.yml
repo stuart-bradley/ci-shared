@@ -29,6 +29,10 @@ jobs:
       - name: Lint scripts
         run: just lint-scripts
 
+      # Static, no build: the one release-only failure `just check` structurally
+      # cannot see (R8 strips Dart-only resources; debug builds aren't shrunk).
+      - uses: stuart-bradley/ci-shared/.github/actions/verify-dart-resources@v1
+
       - name: Check
         run: just check
 
