@@ -22,6 +22,13 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
+      # Reclaim runner disk BEFORE anything downloads/builds. ubuntu-latest's
+      # baseline free disk periodically shrinks under a runner-image rollout,
+      # and `just check` (codegen + tests) then exhausts it and the runner dies
+      # with "No space left on device" long before the smoke build — so this
+      # must run first, unconditionally, not gated to the smoke build.
+      - uses: stuart-bradley/ci-shared/.github/actions/free-disk-space@v1
+
       - uses: stuart-bradley/ci-shared/.github/actions/setup-flutter@v1
         with:
           flutter-version: ${{ inputs.flutter-version }}
@@ -35,18 +42,6 @@ jobs:
 
       - name: Check
         run: just check
-
-      # Only the smoke-build path does a full debug APK build, which is
-      # disk-hungry enough to exhaust the runner ("No space left on device").
-      # Free the unused preinstalled toolchains right before it.
-      - name: Free disk space
-        if: inputs.smoke-build
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android/sdk/ndk \
-            /opt/ghc /usr/local/share/powershell /usr/share/swift \
-            /usr/local/.ghcup 2>/dev/null || true
-          sudo apt-get clean 2>/dev/null || true
-          df -h /
 
       - name: Smoke build (debug APK)
         if: inputs.smoke-build
