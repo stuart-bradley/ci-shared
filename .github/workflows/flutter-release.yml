@@ -38,6 +38,10 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
+      # Reclaim runner disk first — a full release AAB build is disk-hungry and
+      # ubuntu-latest's free space periodically shrinks under an image rollout.
+      - uses: stuart-bradley/ci-shared/.github/actions/free-disk-space@v1
+
       - uses: stuart-bradley/ci-shared/.github/actions/setup-flutter@v1
         with:
           flutter-version: ${{ inputs.flutter-version }}
