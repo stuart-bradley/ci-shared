@@ -8,10 +8,9 @@ description: Install Flutter, Just, cache Gradle, and pub get
 inputs:
   flutter-version:
     description: >-
-      Exact Flutter version to pin (e.g. "3.44.0"). Empty (default) tracks the
-      latest stable. Pin it when a new stable regresses the Android/Gradle build
-      — unpinned stable auto-updates on the runner and has broken e2e/release
-      (e.g. the "compileFlutterBuildDebug not found" Gradle regression).
+      Exact Flutter version, overriding the shared pin below for this caller
+      only. Empty (the default, and what every reusable workflow passes when
+      its own input is unset) means "use the shared pin".
     required: false
     default: ""
 
@@ -21,8 +20,22 @@ runs:
     - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
       with:
         channel: stable
-        # Empty ⇒ subosito treats it as unset and uses the channel's latest.
-        flutter-version: ${{ inputs.flutter-version }}
+        # THE SHARED FLUTTER PIN — one constant, every app, every workflow.
+        #
+        # The SDK was the last floating dependency: actions are SHA-pinned and
+        # pubspec.lock is committed, but an unpinned stable auto-updates on the
+        # runner, so a build changes underfoot with no commit to blame. Twice
+        # now — the "compileFlutterBuildDebug not found" Gradle regression, then
+        # 3.44.8's built-in Kotlin, which stops home_widget 0.9.1 compiling and
+        # took out tasks-on-time's e2e and its next release.
+        #
+        # 3.44.6 is the last version all three apps were green on. It lives here
+        # rather than in each workflow's input default because the workflows
+        # pass their (empty) input straight through, and an explicit "" would
+        # override an input default — so the fallback has to be at the point of
+        # use. Moving it is deliberate: bump here, watch ci + e2e go green on
+        # EVERY app, then move `v1`.
+        flutter-version: ${{ inputs.flutter-version || '3.44.6' }}
         cache: true
 
     - name: Install Just

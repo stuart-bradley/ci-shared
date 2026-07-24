@@ -14,7 +14,7 @@ on:
   workflow_call:
     inputs:
       flutter-version:
-        description: "Exact Flutter version to pin (empty = latest stable)"
+        description: "Exact Flutter version, overriding the shared pin in setup-flutter (empty = use the pin)"
         type: string
         default: ""
     secrets:
@@ -36,13 +36,13 @@ permissions:
 
 jobs:
   release-apk:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       # Reclaim runner disk first — a full signed release APK build is
-      # disk-hungry and ubuntu-latest's free space periodically shrinks under an
-      # image rollout.
+      # disk-hungry and the runner image's free space shrinks between image
+      # versions.
       - uses: stuart-bradley/ci-shared/.github/actions/free-disk-space@v1
 
       - uses: stuart-bradley/ci-shared/.github/actions/setup-flutter@v1

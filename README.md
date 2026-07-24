@@ -65,6 +65,34 @@ Each consuming app must expose the `just` recipes its chosen workflows call:
 Private cross-repo access is enabled on this repo
 (`actions/permissions/access` = `user`) so same-owner apps can reference it.
 
+## Pinning
+
+Nothing in a build is allowed to change without a commit. Actions are pinned to
+full-length SHAs, apps commit `pubspec.lock`, Gradle has its wrapper — and the
+last two floating pieces are pinned here:
+
+| What | Pinned to | Where |
+|---|---|---|
+| Flutter SDK | `3.44.6` | `setup-flutter/action.yml` — the fallback in the `subosito` step |
+| Runner image | `ubuntu-24.04` | `runs-on:` in every workflow |
+
+**The Flutter pin is one constant for every app and every workflow.** It sits at
+the point of use, not in each workflow's input default, because the workflows
+pass their own (empty) `flutter-version` straight through and an explicit `""`
+would beat an input default. Callers override it per-repo with
+`flutter-version:`; pass `""` and you are back on floating stable.
+
+Both pins are scar tissue. An unpinned SDK auto-updates on the runner, so a
+build breaks with no commit to blame: first the `compileFlutterBuildDebug not
+found` Gradle regression, then 3.44.8's built-in Kotlin, which stops
+`home_widget 0.9.1` compiling and took out tasks-on-time's e2e *and* its next
+release. `ubuntu-latest` rolls to a new image on its own schedule, which is how
+the free-disk-space action came to exist.
+
+**Moving a pin is deliberate**: bump it here, watch `ci` + `e2e` go green on
+**every** app, then move `v1`. One edit reaches all of them at once — which is
+the point, and also the risk.
+
 ## Play release notes (`flutter-release`)
 
 The "What's new" text comes from the app's **`CHANGELOG.md`**, so it is written in
@@ -99,6 +127,7 @@ with no numeric `+N`): a missing note is not worth failing a release over when
 
 At version-bump time, rename `## Unreleased` to the new `## x.y.z+N` and open a
 fresh `## Unreleased` — that keeps an accurate per-version history in the repo.
+
 
 ## The R8 resource check (`flutter-ci`)
 
