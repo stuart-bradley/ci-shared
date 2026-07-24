@@ -1,0 +1,25 @@
+name: Play release notes from CHANGELOG.md
+description: >-
+  Write the app's Play Store "What's new" text from CHANGELOG.md into the
+  fastlane metadata the release step uploads. Takes the `## <version>` section
+  matching pubspec.yaml (else `## Unreleased`) and writes
+  android/fastlane/metadata/android/<locale>/changelogs/<versionCode>.txt.
+  A hand-written file of that name always wins. Fails if the notes exceed Play's
+  500-character limit; no section at all just falls back to default.txt.
+
+inputs:
+  locale:
+    description: "Play listing locale the notes belong to (must be active in Play Console)"
+    required: false
+    default: "en-GB"
+  changelog:
+    description: "Path to the changelog file"
+    required: false
+    default: "CHANGELOG.md"
+
+runs:
+  using: composite
+  steps:
+    - name: Generate Play release notes
+      shell: bash
+      run: ${{ github.action_path }}/play-release-notes.sh "${{ inputs.locale }}" "${{ inputs.changelog }}"
