@@ -1,7 +1,7 @@
 name: Free disk space
 description: >
   Remove unused preinstalled toolchains (dotnet, Android NDK, GHC, PowerShell,
-  Swift) to give the Android/Gradle build headroom on ubuntu-latest, whose
+  Swift) to give the Android/Gradle build headroom on the runner image, whose
   baseline free disk periodically shrinks and fails builds with "No space left
   on device". Prints `df -h /` for observability. Run this first — before
   setup-flutter and any build — so every downstream step has the headroom.
