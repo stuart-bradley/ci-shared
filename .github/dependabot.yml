@@ -1,0 +1,12 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    # "/" only scans .github/workflows; composite actions need their own path
+    directories:
+      - /
+      - /.github/actions/setup-flutter
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
