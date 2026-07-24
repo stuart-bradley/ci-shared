@@ -44,8 +44,10 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       # "What's new" text for this versionCode, from the app's CHANGELOG.md.
-      # First: notes over Play's limit should fail in seconds, not after a
-      # ten-minute build — and long before any signing/Play secret is in scope.
+      # First, so notes Play would reject fail in seconds rather than after a
+      # ten-minute build. (Step order is NOT a secret boundary — the signing and
+      # Play secrets land later in this same job, so this step is written to
+      # keep untrusted input out of the shell regardless.)
       - uses: stuart-bradley/ci-shared/.github/actions/play-release-notes@v1
         with:
           locale: ${{ inputs.release-notes-locale }}

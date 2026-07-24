@@ -85,11 +85,17 @@ is where fastlane `supply` already looks (`versionCode` is just the `+N`).
 ```
 
 Nothing is committed back — the file only has to exist in the runner workspace.
-Rules: a hand-written `<versionCode>.txt` always wins; **over 500 characters fails
-the release** (Play's limit — truncating would ship a half-sentence); no section at
-all is not an error, fastlane falls back to `default.txt`. The locale must be an
-**active language in Play Console** or `supply` rejects the changelog; override the
-default with `release-notes-locale`.
+Rules: a hand-written `<versionCode>.txt` always wins, but is still length-checked;
+**over 500 characters fails the release** (Play's limit — truncating would ship a
+half-sentence); no section at all is not an error, fastlane falls back to
+`default.txt`. Blank lines and `###` subheadings are dropped — Play renders them
+as dead space and literal `###`. The locale must be an **active language in Play
+Console** or `supply` rejects the changelog; override the default with
+`release-notes-locale`.
+
+Everything else skips with exit 0 (no `pubspec.yaml`, no changelog, a version
+with no numeric `+N`): a missing note is not worth failing a release over when
+`default.txt` covers it.
 
 At version-bump time, rename `## Unreleased` to the new `## x.y.z+N` and open a
 fresh `## Unreleased` — that keeps an accurate per-version history in the repo.

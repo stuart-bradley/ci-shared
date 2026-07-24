@@ -8,6 +8,10 @@ on:
     branches: [main]
   pull_request:
 
+# This job runs branch-supplied code; it only needs to read the checkout.
+permissions:
+  contents: read
+
 jobs:
   scripts:
     runs-on: ubuntu-latest
@@ -17,5 +21,14 @@ jobs:
       - name: Shellcheck
         run: shellcheck .github/actions/*/*.sh
 
-      - name: Release-notes self-check
-        run: .github/actions/play-release-notes/play-release-notes.test.sh
+      # Discovered by glob, like the shellcheck above: a co-located
+      # `<action>.test.sh` that had to be named here as well would sooner or
+      # later exist without ever running — invisible green CI, which is the
+      # thing this workflow exists to prevent.
+      - name: Action self-checks
+        run: |
+          for t in .github/actions/*/*.test.sh; do
+            [ -e "$t" ] || continue   # unmatched glob stays literal
+            echo "== $t"
+            "$t"
+          done

@@ -22,4 +22,12 @@ runs:
   steps:
     - name: Generate Play release notes
       shell: bash
-      run: ${{ github.action_path }}/play-release-notes.sh "${{ inputs.locale }}" "${{ inputs.changelog }}"
+      # Inputs go through the environment, never into the `run:` text. A `${{ }}`
+      # expression is substituted BEFORE bash parses the line, so a value
+      # containing a quote would execute arbitrary commands — in the same job
+      # that later holds the keystore passwords and the Play service-account key.
+      env:
+        LOCALE: ${{ inputs.locale }}
+        CHANGELOG: ${{ inputs.changelog }}
+      # Single-quoted: a bare value starting with `"` is a YAML quoted scalar.
+      run: '"$GITHUB_ACTION_PATH/play-release-notes.sh" "$LOCALE" "$CHANGELOG"'
