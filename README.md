@@ -67,9 +67,8 @@ Private cross-repo access is enabled on this repo
 
 ## Pinning
 
-Nothing in a build is allowed to change without a commit. Actions are pinned to
-full-length SHAs, apps commit `pubspec.lock`, Gradle has its wrapper — and the
-last two floating pieces are pinned here:
+Actions are pinned to full-length SHAs, apps commit `pubspec.lock`, Gradle has
+its wrapper, and two more pieces are pinned here:
 
 | What | Pinned to | Where |
 |---|---|---|
@@ -92,6 +91,26 @@ the free-disk-space action came to exist.
 **Moving a pin is deliberate**: bump it here, watch `ci` + `e2e` go green on
 **every** app, then move `v1`. One edit reaches all of them at once — which is
 the point, and also the risk.
+
+### What these pins do NOT cover
+
+`runs-on: ubuntu-24.04` pins the distro, **not the image build** — GitHub rolls
+`24.04` forward through image versions and there is no way to pin one.
+
+More importantly, neither pin reaches **Gradle's Maven resolution**, and a
+third-party Flutter plugin can float its own Android dependencies right past
+`pubspec.lock`. `home_widget 0.9.1` asks for `androidx.glance:glance-appwidget:1.+`
+while compiling at `jvmTarget 1.8`; on 2026-07-01 `1.3.0-alpha02` shipped built
+for Java 11 and every Android build of tasks-on-time started failing with
+`Cannot inline bytecode built with JVM target 11 into bytecode built with JVM
+target 1.8` (tasks-on-time#207). Note what it took to see it: `main` stayed green
+for two weeks, because the Gradle cache key is `hashFiles('**/*.gradle*')` and an
+unchanged gradle file restores the **previously resolved** version. Only branches
+that touched a gradle file re-resolved and went red.
+
+So: a green run does not prove the build is reproducible — it may be proving the
+cache is warm. Constrain a plugin's `+` ranges with a `resolutionStrategy.force`
+in the app's `android/build.gradle.kts` when you find one.
 
 ## Play release notes (`flutter-release`)
 
