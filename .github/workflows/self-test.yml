@@ -1,0 +1,34 @@
+name: Self test
+
+# ci-shared's own CI. The action scripts here only ever run inside a consuming
+# app's workflow, so without this a broken one surfaces mid-release — after the
+# `v1` tag has already moved and every app has picked it up.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# This job runs branch-supplied code; it only needs to read the checkout.
+permissions:
+  contents: read
+
+jobs:
+  scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Shellcheck
+        run: shellcheck .github/actions/*/*.sh
+
+      # Discovered by glob, like the shellcheck above: a co-located
+      # `<action>.test.sh` that had to be named here as well would sooner or
+      # later exist without ever running — invisible green CI, which is the
+      # thing this workflow exists to prevent.
+      - name: Action self-checks
+        run: |
+          for t in .github/actions/*/*.test.sh; do
+            [ -e "$t" ] || continue   # unmatched glob stays literal
+            echo "== $t"
+            "$t"
+          done
