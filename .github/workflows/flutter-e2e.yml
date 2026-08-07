@@ -114,6 +114,14 @@ jobs:
       # patrol apps must also produce the androidTest APK that `flutter build
       # apk` never emits.
       - name: Build the app under test
+        # Step-level ceiling, well under the job's. A job killed by
+        # `timeout-minutes` reports conclusion=cancelled and keeps NO
+        # downloadable log, so a hang here is undiagnosable after the fact --
+        # which is exactly what happened three times on 2026-08-07 (#18). A
+        # step timeout fails the STEP instead, so the job completes, the log is
+        # retained, and the next person can see where it stuck. Measured
+        # 8.0-10.4m across the apps, so 15 is generous headroom, not a target.
+        timeout-minutes: 15
         run: just e2e-build
 
       # Enable KVM so the emulator is hardware-accelerated (else it times out).
@@ -149,6 +157,12 @@ jobs:
       # force-avd-creation: false reuses the cached AVD on a hit, creates it on a
       # miss (the post-job Cache AVD step saves only when the JOB passes).
       - name: Run E2E tests
+        # See the build step: a step ceiling keeps the log when this hangs.
+        # Measured 4.5-8.0m (AVD hit vs miss), so 12 is generous. Build 15 +
+        # emulator 12 + ~3 setup fits inside the 30m job ceiling, so a step
+        # timeout always fires BEFORE the job timeout -- which is the whole
+        # point, since only the step timeout preserves diagnostics.
+        timeout-minutes: 12
         uses: reactivecircus/android-emulator-runner@e89f39f1abbbd05b1113a29cf4db69e7540cae5a # v2.37.0
         with:
           api-level: ${{ inputs.api-level }}
