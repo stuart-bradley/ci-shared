@@ -23,7 +23,15 @@ name: Flutter E2E
 #
 # Building first collapses the emulator's live window from ~19 min to a
 # measured 6.2 min (2.4 boot/AVD + ~2 residual Gradle + 1.7 tests) and lets the
-# build use the whole runner. `just e2e-build` is not extra
+# build use the whole runner.
+#
+# It is NOT sufficient on its own. A residual assembleDebug still runs inside
+# the emulator window, and on the heaviest app that alone re-created the
+# starvation (tasks-on-time 31176188909). Hence the throttle step further down:
+# unthrottled where the build owns the runner, throttled where it shares it
+# with QEMU. Both halves are load-bearing -- do not delete either.
+#
+# `just e2e-build` is not extra
 # work: `just e2e` runs the same Gradle task and now finds it up to date —
 # measured locally at 23% (cog-scroll), 24% (tasks-on-time) and 32%
 # (well-quill) of that app's cold build. The well-quill figure is the one
@@ -132,15 +140,35 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      # NOTE: there is deliberately no `org.gradle.workers.max=3` step here any
-      # more. It existed only to leave the QEMU2 main loop a core while Gradle
-      # ran beside a booted emulator; the build now finishes before the emulator
-      # starts, so throttling it just made the job slower. A residual Gradle
-      # invocation does still run inside the step below (`flutter test` re-runs
-      # assembleDebug and finds it up to date, ~20–56 s) with
-      # org.gradle.jvmargs=-Xmx8G from the app's android/gradle.properties — the
-      # only place the old rationale still half-applies, and small enough to
-      # leave alone.
+      # Throttle Gradle for the RESIDUAL build only. `just e2e-build` above has
+      # already run unthrottled with the whole runner to itself; this caps what
+      # `flutter test` re-runs INSIDE the emulator window.
+      #
+      # This step used to exist, throttling the whole build; #16 deleted it on
+      # the reasoning that the build now finishes before the emulator starts.
+      # That was wrong, and tasks-on-time 31176188909 is the proof -- the
+      # emulator booted, `flutter test` re-entered assembleDebug, and five
+      # minutes later:
+      #
+      #   ERROR | detected a hanging thread 'QEMU2 CPU0 thread'. No response for 15252 ms
+      #   ERROR | detected a hanging thread 'QEMU2 main loop'. No response for 15642 ms
+      #   ##[error]The runner has received a shutdown signal.
+      #
+      # i.e. the exact starvation the reorder was supposed to remove. The
+      # residual is unavoidable for the plain-Flutter apps: `flutter test
+      # integration_test/...` writes a fresh /tmp/flutter_test_listener.XXXX
+      # entrypoint per invocation and `targetPath` is a Gradle @Input, so
+      # compileFlutterBuildDebug can never be UP-TO-DATE. (Patrol apps reuse
+      # better -- `patrol build android` and `patrol test` share the stable
+      # -Ptarget=integration_test/test_bundle.dart.)
+      #
+      # So: unthrottled where it is the only workload, throttled where it shares
+      # a 4-vCPU runner with QEMU. ~/.gradle/gradle.properties overrides the
+      # app's android/gradle.properties.
+      - name: Constrain Gradle for the residual build
+        run: |
+          mkdir -p ~/.gradle
+          echo "org.gradle.workers.max=3" >> ~/.gradle/gradle.properties
 
       - name: Cache AVD
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
