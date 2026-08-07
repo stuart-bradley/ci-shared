@@ -12,8 +12,16 @@ name: Flutter E2E
 #   ERROR | detected a hanging thread 'QEMU2 main loop'. No response for 15594 ms
 #   ##[error]The runner has received a shutdown signal.
 #
-# That was every genuine E2E infra failure in the 30 days to 2026-08-06 — 5 of
-# 98 runs. Building first collapses the emulator's live window from ~13 min to
+# That is one of two failure modes with the same cause. The other is the job
+# clock: assembleDebug overruns `timeout-minutes` and the job is killed having
+# produced nothing. Over the 30 days to 2026-08-06 that was 15 of 98 runs — 5
+# runner deaths plus 10 timeouts costing 265 min. The timeouts hid for a while,
+# because a timed-out job reports `conclusion: cancelled` and keeps NO
+# downloadable log; the only trace is the check-run annotation "The job has
+# exceeded the maximum execution time of 20m0s". Grep the annotation, not the
+# log, when auditing this job.
+#
+# Building first collapses the emulator's live window from ~13 min to
 # ~2 and lets the build use the whole runner. `just e2e-build` is not extra
 # work: `just e2e` runs the same Gradle task and now finds it up to date —
 # measured locally at 23% (cog-scroll), 24% (tasks-on-time) and 32%
@@ -65,9 +73,9 @@ jobs:
 
       # Reclaim runner disk first — emulator + build are disk-hungry and
       # the runner image's free space shrinks between image versions.
-      - uses: stuart-bradley/ci-shared/.github/actions/free-disk-space@v1
+      - uses: stuart-bradley/ci-shared/.github/actions/free-disk-space@fix/e2e-build-before-emulator
 
-      - uses: stuart-bradley/ci-shared/.github/actions/setup-flutter@v1
+      - uses: stuart-bradley/ci-shared/.github/actions/setup-flutter@fix/e2e-build-before-emulator
         with:
           flutter-version: ${{ inputs.flutter-version }}
           # This job only ever runs on pull_request, so anything it saved landed
