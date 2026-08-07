@@ -21,8 +21,9 @@ name: Flutter E2E
 # exceeded the maximum execution time of 20m0s". Grep the annotation, not the
 # log, when auditing this job.
 #
-# Building first collapses the emulator's live window from ~13 min to
-# ~2 and lets the build use the whole runner. `just e2e-build` is not extra
+# Building first collapses the emulator's live window from ~19 min to a
+# measured 6.2 min (2.4 boot/AVD + ~2 residual Gradle + 1.7 tests) and lets the
+# build use the whole runner. `just e2e-build` is not extra
 # work: `just e2e` runs the same Gradle task and now finds it up to date —
 # measured locally at 23% (cog-scroll), 24% (tasks-on-time) and 32%
 # (well-quill) of that app's cold build. The well-quill figure is the one
@@ -55,9 +56,19 @@ on:
         type: boolean
         default: false
       timeout-minutes:
+        # 30, not 20. Measured on the validation run (tasks-on-time 31158068743,
+        # the reorder's first real run): 18m0s total — 9.2m build + 6.2m
+        # emulator + ~2m setup — with NO Gradle cache and an AVD cache miss,
+        # i.e. close to worst case. Two minutes of headroom against a 20m
+        # ceiling is not enough, and that ceiling is exactly what produced 10
+        # killed jobs and 265 wasted minutes in the 30 days to 2026-08-06. The
+        # reorder buys reliability (emulator exposure 19m -> 6.2m) but only a
+        # couple of minutes of wall clock, because the build costs the same
+        # either way — so the ceiling has to move too. This only bills when a
+        # job genuinely hangs.
         description: "Job timeout (ceiling; only bills when a job hangs)"
         type: number
-        default: 20
+        default: 30
       flutter-version:
         description: "Exact Flutter version, overriding the shared pin in setup-flutter (empty = use the pin)"
         type: string
@@ -73,9 +84,9 @@ jobs:
 
       # Reclaim runner disk first — emulator + build are disk-hungry and
       # the runner image's free space shrinks between image versions.
-      - uses: stuart-bradley/ci-shared/.github/actions/free-disk-space@fix/e2e-build-before-emulator
+      - uses: stuart-bradley/ci-shared/.github/actions/free-disk-space@v1
 
-      - uses: stuart-bradley/ci-shared/.github/actions/setup-flutter@fix/e2e-build-before-emulator
+      - uses: stuart-bradley/ci-shared/.github/actions/setup-flutter@v1
         with:
           flutter-version: ${{ inputs.flutter-version }}
           # This job only ever runs on pull_request, so anything it saved landed
