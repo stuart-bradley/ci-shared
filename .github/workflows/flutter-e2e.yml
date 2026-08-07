@@ -1,9 +1,45 @@
 name: Flutter E2E
 
-# Reusable Android-emulator E2E job. Callers keep their own pull_request
-# trigger + paths + concurrency. The emulator boots ONCE: on an AVD-cache miss
-# the run step creates the AVD and the post-job cache saves it (only on a
-# passing run — actions/cache is post-if: success()); on a hit it reuses it.
+# Reusable Android-emulator E2E job. Callers keep their own trigger + paths +
+# concurrency, and gate this behind their `check` job with `needs:`.
+#
+# THE STEP ORDER IS THE POINT: the app is built BEFORE the emulator boots.
+#
+# The build is nearly all of this job — assembleDebug measured 663.3 s on a
+# passing cog-scroll run whose tests then took 3 s. Running it next to an
+# already-booted emulator starves QEMU on a 4-vCPU runner:
+#
+#   ERROR | detected a hanging thread 'QEMU2 main loop'. No response for 15594 ms
+#   ##[error]The runner has received a shutdown signal.
+#
+# That is one of two failure modes with the same cause. The other is the job
+# clock: assembleDebug overruns `timeout-minutes` and the job is killed having
+# produced nothing. Over the 30 days to 2026-08-06 that was 15 of 98 runs — 5
+# runner deaths plus 10 timeouts costing 265 min. The timeouts hid for a while,
+# because a timed-out job reports `conclusion: cancelled` and keeps NO
+# downloadable log; the only trace is the check-run annotation "The job has
+# exceeded the maximum execution time of 20m0s". Grep the annotation, not the
+# log, when auditing this job.
+#
+# Building first collapses the emulator's live window from ~19 min to a
+# measured 6.2 min (2.4 boot/AVD + ~2 residual Gradle + 1.7 tests) and lets the
+# build use the whole runner. `just e2e-build` is not extra
+# work: `just e2e` runs the same Gradle task and now finds it up to date —
+# measured locally at 23% (cog-scroll), 24% (tasks-on-time) and 32%
+# (well-quill) of that app's cold build. The well-quill figure is the one
+# measured with NO device attached during e2e-build, which is what happens
+# here; a local run with a device attached for both halves looks twice as good
+# and would be the wrong number to hold this job to.
+#
+# There is deliberately NO retry-on-infra-crash any more. The previous
+# classify/retry/gate trio fired 0 times in those 98 runs and could not have
+# helped the 5 deaths — when the runner dies, no later step executes at all. Its
+# signatures were also wrong: `TimeoutException` is what a REAL E2E failure looks
+# like, and `Failed to find ColorBuffer` appears in PASSING runs. Deleting it
+# also lets the emulator step drop `continue-on-error`, which is what made
+# `gh run view --log-failed` return nothing (continue-on-error reports the step's
+# conclusion as success, so GitHub recorded no failed step). Re-run by hand on
+# the rare runner death: `gh run rerun --failed`.
 on:
   workflow_call:
     inputs:
@@ -20,9 +56,19 @@ on:
         type: boolean
         default: false
       timeout-minutes:
+        # 30, not 20. Measured on the validation run (tasks-on-time 31158068743,
+        # the reorder's first real run): 18m0s total — 9.2m build + 6.2m
+        # emulator + ~2m setup — with NO Gradle cache and an AVD cache miss,
+        # i.e. close to worst case. Two minutes of headroom against a 20m
+        # ceiling is not enough, and that ceiling is exactly what produced 10
+        # killed jobs and 265 wasted minutes in the 30 days to 2026-08-06. The
+        # reorder buys reliability (emulator exposure 19m -> 6.2m) but only a
+        # couple of minutes of wall clock, because the build costs the same
+        # either way — so the ceiling has to move too. This only bills when a
+        # job genuinely hangs.
         description: "Job timeout (ceiling; only bills when a job hangs)"
         type: number
-        default: 20
+        default: 30
       flutter-version:
         description: "Exact Flutter version, overriding the shared pin in setup-flutter (empty = use the pin)"
         type: string
@@ -43,6 +89,12 @@ jobs:
       - uses: stuart-bradley/ci-shared/.github/actions/setup-flutter@v1
         with:
           flutter-version: ${{ inputs.flutter-version }}
+          # This job only ever runs on pull_request, so anything it saved landed
+          # on refs/pull/N/merge where no other PR could read it — 5.4 GB of
+          # tasks-on-time's 8.1 GB budget, evicting the caches that do work. It
+          # still RESTORES; it just stops writing. See the cache steps in
+          # setup-flutter for the measurements.
+          save-gradle-cache: false
 
       - name: Install patrol_cli
         if: inputs.install-patrol
@@ -55,6 +107,15 @@ jobs:
       - name: Generate code
         run: just codegen
 
+      # Build the app BEFORE the emulator exists — the whole point of this job's
+      # ordering (see the header). Each app owns the command because the right
+      # one differs: the plain-Flutter apps pin `--target-platform android-x64`
+      # to match the single ABI `flutter test` builds for the emulator, while
+      # patrol apps must also produce the androidTest APK that `flutter build
+      # apk` never emits.
+      - name: Build the app under test
+        run: just e2e-build
+
       # Enable KVM so the emulator is hardware-accelerated (else it times out).
       - name: Enable KVM
         run: |
@@ -63,14 +124,15 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      # The E2E job runs a debug build alongside a live emulator on a ~4 vCPU /
-      # 16 GB runner. Cap Gradle to 3 workers (CI-only) so the build leaves a
-      # core for the emulator's QEMU2 main loop. ~/.gradle/gradle.properties
-      # overrides android/gradle.properties.
-      - name: Constrain Gradle for the emulator
-        run: |
-          mkdir -p ~/.gradle
-          echo "org.gradle.workers.max=3" >> ~/.gradle/gradle.properties
+      # NOTE: there is deliberately no `org.gradle.workers.max=3` step here any
+      # more. It existed only to leave the QEMU2 main loop a core while Gradle
+      # ran beside a booted emulator; the build now finishes before the emulator
+      # starts, so throttling it just made the job slower. A residual Gradle
+      # invocation does still run inside the step below (`flutter test` re-runs
+      # assembleDebug and finds it up to date, ~20–56 s) with
+      # org.gradle.jvmargs=-Xmx8G from the app's android/gradle.properties — the
+      # only place the old rationale still half-applies, and small enough to
+      # leave alone.
 
       - name: Cache AVD
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
@@ -81,37 +143,18 @@ jobs:
             ~/.android/adb*
           key: avd-api${{ inputs.api-level }}-x86_64-${{ inputs.disk-size }}-emu11237101-${{ runner.os }}
 
-      # Single emulator boot per attempt. Cold boot (-no-snapshot-load
-      # -no-snapshot-save): no RAM snapshot is saved/cached, so a run can't hit
-      # "cannot load snapshot: default_boot" from emulator-version drift across
-      # runs. force-avd-creation: false reuses the cached AVD on a hit, creates
-      # it on a miss (the post-job Cache AVD step saves it only when the JOB
-      # passes — so a retried infra crash still caches, a hard failure doesn't).
-      #
-      # RETRY-ON-INFRA-CRASH (attempt -> conditional retry -> gate). The
-      # swiftshader GPU translator can die mid-run ("Failed to find ColorBuffer"),
-      # which either kills the emulator (patrol reports "Failed: 0" yet exits
-      # nonzero) or degrades it so a widget wait times out (a visibility
-      # TimeoutException surfacing as Failed: N). Either way a green suite is
-      # failed by dead/degraded infra and it can strike any PR on any of the three
-      # apps. We retry ONCE on a fresh emulator when attempt 1's captured output
-      # bears that infra signature (Failed: 0, TimeoutException, or ColorBuffer).
-      # A genuine assertion mismatch bears none of those, so it skips the retry and
-      # fails fast — the re-run can't mask it (and a deterministic timeout-shaped
-      # bug recurs on the single retry anyway). The two runner steps must keep
-      # IDENTICAL emulator config (GitHub Actions has no YAML anchors). A retry
-      # roughly doubles worst-case wall time, so callers should size
-      # timeout-minutes to fit one retry (well-quill uses 30).
-      - name: Run E2E tests (attempt 1)
-        id: e2e1
-        continue-on-error: true
+      # Single emulator boot. Cold boot (-no-snapshot-load -no-snapshot-save): no
+      # RAM snapshot is saved/cached, so a run can't hit "cannot load snapshot:
+      # default_boot" from emulator-version drift across runs.
+      # force-avd-creation: false reuses the cached AVD on a hit, creates it on a
+      # miss (the post-job Cache AVD step saves only when the JOB passes).
+      - name: Run E2E tests
         uses: reactivecircus/android-emulator-runner@e89f39f1abbbd05b1113a29cf4db69e7540cae5a # v2.37.0
         with:
           api-level: ${{ inputs.api-level }}
           # Pin emulator 33.1.24.0 (build 11237101). Recent builds (36.x) hit
           # "Failed to find ColorBuffer" fatally on ~every headless run; the
-          # documented fix is this downgrade (#64 bucket A). Both runner steps
-          # MUST keep the same build.
+          # documented fix is this downgrade (#64 bucket A).
           emulator-build: "11237101"
           target: google_apis
           arch: x86_64
@@ -122,85 +165,14 @@ jobs:
           emulator-options: -no-snapshot-load -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
           disable-animations: true
           # MUST be ONE line: the emulator-runner runs `script` one line per
-          # `sh -c`, so a multi-line block loses `rc` across shells and splits
+          # `sh -c`, so a multi-line block loses state across shells and splits
           # `if/fi` (`sh: Syntax error ... expecting "fi"`, exit 2) even when all
           # tests pass. No pipe either (pipefail/PIPESTATUS aren't portable; a
-          # mis-read exit could mask a real failure). Leaves e2e-output.txt in the
-          # workspace for the classify step and dumps logcat on failure via `||`.
-          # $GITHUB_OUTPUT can't be set from here (subprocess), so infra
-          # classification happens in the next (normal) run step.
-          script: just e2e > e2e-output.txt 2>&1; rc=$?; cat e2e-output.txt; [ "$rc" -eq 0 ] || adb logcat -d > emulator-logcat.txt 2>&1; exit "$rc"
-
-      # Classify attempt 1's failure in a NORMAL run step, where $GITHUB_OUTPUT
-      # actually sets a step output (it can't from inside the emulator-runner
-      # script above). Reads the e2e-output.txt attempt 1 left in the workspace.
-      # Infra signature = emulator-killed ("Failed: 0" plus the nonzero exit that
-      # got us here), a GPU-degraded visibility "TimeoutException", or "Failed to
-      # find ColorBuffer" (rare in captured output — it mostly prints to the
-      # emulator host stderr / action log). A genuine assertion mismatch bears
-      # none of these, so infra stays unset and the job fails fast.
-      - name: Classify attempt 1 failure
-        id: classify
-        if: steps.e2e1.outcome == 'failure'
-        run: |
-          if grep -qE 'Failed: 0|TimeoutException|Failed to find ColorBuffer' e2e-output.txt; then
-            echo "infra=true" >> "$GITHUB_OUTPUT"
-            echo "::warning::E2E attempt 1 hit an emulator infra crash — retrying once on a fresh emulator."
-          else
-            echo "No infra signature in attempt 1 output — real failure, no retry."
-          fi
-
-      # Retry ONCE, on a fresh emulator, only when attempt 1 died from the infra
-      # signature (classify only runs on an attempt-1 failure). Emulator config
-      # MUST match attempt 1.
-      - name: Run E2E tests (retry after infra crash)
-        id: e2e2
-        if: steps.classify.outputs.infra == 'true'
-        continue-on-error: true
-        uses: reactivecircus/android-emulator-runner@e89f39f1abbbd05b1113a29cf4db69e7540cae5a # v2.37.0
-        with:
-          api-level: ${{ inputs.api-level }}
-          # Pin emulator 33.1.24.0 (build 11237101). Recent builds (36.x) hit
-          # "Failed to find ColorBuffer" fatally on ~every headless run; the
-          # documented fix is this downgrade (#64 bucket A). Both runner steps
-          # MUST keep the same build.
-          emulator-build: "11237101"
-          target: google_apis
-          arch: x86_64
-          profile: pixel_6
-          force-avd-creation: false
-          emulator-boot-timeout: 600
-          disk-size: ${{ inputs.disk-size }}
-          emulator-options: -no-snapshot-load -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
-          disable-animations: true
-          script: just e2e > e2e-output.txt 2>&1; rc=$?; cat e2e-output.txt; [ "$rc" -eq 0 ] || adb logcat -d > emulator-logcat.txt 2>&1; exit "$rc"
-
-      # Upload both attempts' diagnostics (the retry overwrites the files, so this
-      # holds the last/most-relevant failure). always() so a pass and a failing
-      # attempt both ship their captured output+logcat (a job-level timeout can't
-      # run it, but the redirect writes e2e-output.txt incrementally on disk).
-      - name: Upload E2E diagnostics
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-diagnostics
-          path: |
-            e2e-output.txt
-            emulator-logcat.txt
-          if-no-files-found: ignore
-
-      # Gate: pass iff SOME attempt succeeded. A real test failure (attempt 1
-      # failed, infra flag unset -> retry skipped) reaches here with no success
-      # and fails the job — the retry can't mask it. Both attempts are
-      # continue-on-error, so this gate is the single source of the job verdict.
-      - name: E2E result gate
-        if: always()
-        run: |
-          a1='${{ steps.e2e1.outcome }}'
-          a2='${{ steps.e2e2.outcome }}'
-          if [ "$a1" = 'success' ] || [ "$a2" = 'success' ]; then
-            echo "E2E passed (attempt1=$a1, attempt2=${a2:-skipped})"
-            exit 0
-          fi
-          echo "E2E failed (attempt1=$a1, infra=${{ steps.classify.outputs.infra }}, attempt2=${a2:-skipped})"
-          exit 1
+          # mis-read exit could mask a real failure).
+          #
+          # Output STREAMS now rather than being redirected to a file and dumped
+          # at the end — the file existed for the deleted classify step, and with
+          # the build hoisted out there is no longer a ~11-minute silent window
+          # to buffer. logcat goes to stdout too (tail-capped), so a failure
+          # needs no artifact download.
+          script: just e2e || { rc=$?; echo '--- logcat (last 2000 lines) ---'; adb logcat -d -t 2000; exit "$rc"; }
