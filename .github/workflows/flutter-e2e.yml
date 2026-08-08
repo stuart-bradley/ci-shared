@@ -300,11 +300,22 @@ jobs:
           # safe when validated on cog-scroll.
           #
           # It CAPTURES ONLY -- it deliberately does not `cat` the file itself.
-          # The dump lives in the `if: always()` step below so it also survives
-          # a step timeout, which kills this script before any trailing command
-          # could run. logcat goes to a file here rather than stdout because the
-          # emulator is torn down with this step; a later step cannot call adb.
-          script: just e2e > e2e-output.txt 2>&1; rc=$?; [ "$rc" -eq 0 ] || adb logcat -d -t 2000 > e2e-logcat.txt 2>&1; exit "$rc"
+          # The dump lives in the `if: always()` step below. logcat goes to a
+          # file here rather than stdout because the emulator is torn down with
+          # this step; a later step cannot call adb.
+          #
+          # `timeout` IS LOAD-BEARING -- do not drop it on the grounds that the
+          # step already has `timeout-minutes`. THE STEP CEILING DOES NOT
+          # RELIABLY FIRE ON THIS ACTION. Measured on well-quill 31250470722:
+          # `Run E2E tests` carried timeout-minutes 35, ran for ~51 minutes
+          # without ever completing, and the JOB ceiling (45m) killed it -- which
+          # retains NO log, exactly the outcome the step ceiling exists to
+          # prevent. Bounding the command inside the script guarantees it
+          # returns, so the logcat branch and the dump step below both run.
+          #
+          # 3 minutes under the step ceiling so this fires first, leaving room
+          # for the emulator-runner's own teardown.
+          script: timeout $(( ${{ inputs.emulator-timeout-minutes }} - 3 ))m just e2e > e2e-output.txt 2>&1; rc=$?; [ "$rc" -eq 0 ] || adb logcat -d -t 2000 > e2e-logcat.txt 2>&1; exit "$rc"
 
       # THE OTHER HALF OF THE REDIRECT. Restoring the redirect without this is a
       # regression, not a fix: `just e2e` writes to a file and prints nothing, so
