@@ -266,11 +266,25 @@ jobs:
           # exactly that, on the reasoning that the file only existed to feed
           # the deleted classify step, and it KILLED the patrol apps.
           #
-          # Proven by control experiment (2026-08-08): well-quill failed 3/3
-          # with streaming (31195967334, 31215728866, 31218579722, all ending
-          # `hanging thread 'QEMU2 ...'` -> `runner has received a shutdown
-          # signal`) and passed on the FIRST try with this redirect restored
-          # (31247153733, 0 hangs), on a byte-identical app.
+          # Evidence (well-quill, byte-identical app, 2026-08-07/08). The two
+          # runs that isolate this variable both had the warm build SKIPPED, so
+          # the only difference from the passing run is how output is handled:
+          #
+          #   31215728866  warm build skipped, streaming -> QEMU hang, runner killed
+          #   31218579722  warm build skipped, streaming -> QEMU hang, runner killed
+          #   31247153733  no warm build,      redirect  -> PASSED, 0 hangs
+          #
+          # Do NOT also cite 31195967334 for this: that run RAN the warm build,
+          # so it carries two variables at once and the header above already
+          # attributes it to the Gradle daemon. One run id must not be evidence
+          # for two mechanisms.
+          #
+          # Caveat worth keeping honest: 31247153733 is the whole pre-reorder
+          # workflow, not a one-line revert, so it is not a pure single-variable
+          # control on its own. The other pre-reorder deltas are separately
+          # excluded -- the retry steps were `skipped` in it, step timeouts do
+          # not change execution, and the Gradle cache save runs in a POST step
+          # after the emulator is gone.
           #
           # Why: patrol emits a continuous ANSI progress redraw (cursor-up +
           # erase-line per step). Streaming it makes the runner timestamp,
@@ -285,6 +299,34 @@ jobs:
           # ~3s and print almost nothing. Low output volume is why it looked
           # safe when validated on cog-scroll.
           #
-          # logcat still goes to stdout (tail-capped) so a failure needs no
-          # artifact download.
-          script: just e2e > e2e-output.txt 2>&1; rc=$?; cat e2e-output.txt; [ "$rc" -eq 0 ] || { echo '--- logcat (last 2000 lines) ---'; adb logcat -d -t 2000; }; exit "$rc"
+          # It CAPTURES ONLY -- it deliberately does not `cat` the file itself.
+          # The dump lives in the `if: always()` step below so it also survives
+          # a step timeout, which kills this script before any trailing command
+          # could run. logcat goes to a file here rather than stdout because the
+          # emulator is torn down with this step; a later step cannot call adb.
+          script: just e2e > e2e-output.txt 2>&1; rc=$?; [ "$rc" -eq 0 ] || adb logcat -d -t 2000 > e2e-logcat.txt 2>&1; exit "$rc"
+
+      # THE OTHER HALF OF THE REDIRECT. Restoring the redirect without this is a
+      # regression, not a fix: `just e2e` writes to a file and prints nothing, so
+      # if nothing dumps the file the step log is EMPTY.
+      #
+      # It must be a separate `if: always()` step rather than a trailing command
+      # in the script above. When `timeout-minutes` fires, the runner SIGKILLs
+      # the emulator step's process group, so anything appended to that one-liner
+      # never executes -- but `always()` steps still run. A hang is the failure
+      # mode this job is built around (10 timed-out jobs in 98 runs), and #19
+      # added the step ceilings specifically so "a hang keeps its log"; without
+      # this step that guarantee is silently void, and worst for the patrol apps,
+      # whose entire 35-minute build+test window would go dark.
+      #
+      # The redirect writes incrementally, so the file holds everything up to the
+      # hang. Dumping here cannot re-create the streaming contention the redirect
+      # exists to avoid, because the emulator is already gone by this point.
+      - name: Dump E2E diagnostics
+        if: always()
+        run: |
+          tail -c 2000000 e2e-output.txt || true
+          if [ -s e2e-logcat.txt ]; then
+            echo '--- logcat (last 2000 lines) ---'
+            cat e2e-logcat.txt
+          fi
