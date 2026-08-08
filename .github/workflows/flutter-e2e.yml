@@ -95,12 +95,18 @@ on:
         # not the ~19m mean, or the occasional slow run gets clipped.
         #
         # LOAD-BEARING INVARIANT: this ceiling + ~5 min of setup/teardown must
-        # stay UNDER the caller's `timeout-minutes`, so the STEP timeout always
-        # fires first. Only a step timeout fails the step and keeps the log; a
-        # job killed by `timeout-minutes` reports conclusion=cancelled and
-        # retains NOTHING. Measured worst case at 35: 3m51s pre-steps + 35m +
-        # 1m11s post (a 4G AVD save is not free) = 40m18s against a 45m job
-        # ceiling. Raising one requires raising the other, in every patrol caller.
+        # stay UNDER the caller's `timeout-minutes`. A job killed by
+        # `timeout-minutes` reports conclusion=cancelled and retains NOTHING,
+        # so the job ceiling must never be what fires. Measured worst case at
+        # 35: 3m51s pre-steps + 35m + 1m11s post (a 4G AVD save is not free) =
+        # 40m18s against a 45m job ceiling. Raising one requires raising the
+        # other, in every patrol caller.
+        #
+        # DO NOT rely on this step ceiling alone. It does NOT reliably fire on
+        # the emulator-runner step: on well-quill 31250470722 the step carried
+        # 35 and ran ~51 minutes without completing, and the JOB ceiling killed
+        # it -- losing the log. That is why the script itself is wrapped in
+        # `timeout` (see the emulator step). Belt and braces, deliberately.
         description: "Ceiling for the emulator step (patrol apps build inside it — pass 35)"
         type: number
         default: 12
@@ -261,57 +267,39 @@ jobs:
           # tests pass. No pipe either (pipefail/PIPESTATUS aren't portable; a
           # mis-read exit could mask a real failure).
           #
-          # REDIRECT TO A FILE, THEN DUMP. Do NOT "simplify" this to a plain
-          # `just e2e` that streams straight to the Actions log — #16 did
-          # exactly that, on the reasoning that the file only existed to feed
-          # the deleted classify step, and it KILLED the patrol apps.
+          # Output is captured to a FILE, not streamed to the Actions log.
           #
-          # Evidence (well-quill, byte-identical app, 2026-08-07/08). The two
-          # runs that isolate this variable both had the warm build SKIPPED, so
-          # the only difference from the passing run is how output is handled:
+          # HONEST STATUS: this does NOT fix the patrol QEMU runner deaths, and
+          # an earlier version of this comment claimed it did. Run 31252986313
+          # ran with this redirect AND the timeout bound below and still died
+          # (`hanging thread 'QEMU2 ...'` -> `runner has received a shutdown
+          # signal`, ~10 min into the build). The single passing control
+          # (31247153733) was the whole pre-reorder workflow, and one green run
+          # is not evidence for a ~4%-base-rate failure. The cause of the patrol
+          # deaths is UNRESOLVED -- see #22.
           #
-          #   31215728866  warm build skipped, streaming -> QEMU hang, runner killed
-          #   31218579722  warm build skipped, streaming -> QEMU hang, runner killed
-          #   31247153733  no warm build,      redirect  -> PASSED, 0 hangs
-          #
-          # Do NOT also cite 31195967334 for this: that run RAN the warm build,
-          # so it carries two variables at once and the header above already
-          # attributes it to the Gradle daemon. One run id must not be evidence
-          # for two mechanisms.
-          #
-          # Caveat worth keeping honest: 31247153733 is the whole pre-reorder
-          # workflow, not a one-line revert, so it is not a pure single-variable
-          # control on its own. The other pre-reorder deltas are separately
-          # excluded -- the retry steps were `skipped` in it, step timeouts do
-          # not change execution, and the Gradle cache save runs in a POST step
-          # after the emulator is gone.
-          #
-          # Why: patrol emits a continuous ANSI progress redraw (cursor-up +
-          # erase-line per step). Streaming it makes the runner timestamp,
-          # process and network-upload every one of those writes, continuously,
-          # on a 4-vCPU box already running QEMU. The deaths cluster during TEST
-          # EXECUTION -- peak output rate -- not during the build, and execution
-          # ran ~5x slower (2 flows in 163s vs all 8 in 173s). A file write is
-          # cheap; one `cat` afterwards is a single burst, not sustained
-          # contention.
-          #
-          # The plain-Flutter apps never showed this because their tests take
-          # ~3s and print almost nothing. Low output volume is why it looked
-          # safe when validated on cog-scroll.
+          # The redirect is kept anyway, on narrower grounds: it matches the
+          # long-standing pre-#16 arrangement, it costs nothing, and buffering
+          # is the cheaper thing to do next to a live QEMU. Do not re-derive a
+          # causal claim from it.
           #
           # It CAPTURES ONLY -- it deliberately does not `cat` the file itself.
-          # The dump lives in the `if: always()` step below. logcat goes to a
-          # file here rather than stdout because the emulator is torn down with
-          # this step; a later step cannot call adb.
+          # An unbounded in-script `cat` is a real hazard, proven by run
+          # 31248007283: the tests finished at 08:43:20 and the dump then
+          # streamed for 38 minutes and tripped the 45m JOB ceiling, which
+          # retains no log at all. The bounded dump step below replaces it.
+          #
+          # logcat goes to a file here rather than stdout because the emulator is
+          # torn down with this step; a later step cannot call adb.
           #
           # `timeout` IS LOAD-BEARING -- do not drop it on the grounds that the
           # step already has `timeout-minutes`. THE STEP CEILING DOES NOT
           # RELIABLY FIRE ON THIS ACTION. Measured on well-quill 31250470722:
-          # `Run E2E tests` carried timeout-minutes 35, ran for ~51 minutes
-          # without ever completing, and the JOB ceiling (45m) killed it -- which
-          # retains NO log, exactly the outcome the step ceiling exists to
-          # prevent. Bounding the command inside the script guarantees it
-          # returns, so the logcat branch and the dump step below both run.
+          # `Run E2E tests` carried timeout-minutes 35, ran ~51 minutes without
+          # ever completing, and the JOB ceiling (45m) killed it -- retaining NO
+          # log, exactly what the step ceiling exists to prevent. Bounding the
+          # command guarantees it returns, so the logcat capture and the dump
+          # step both run whatever GitHub's step timeout does.
           #
           # 3 minutes under the step ceiling so this fires first, leaving room
           # for the emulator-runner's own teardown.
