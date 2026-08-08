@@ -261,9 +261,30 @@ jobs:
           # tests pass. No pipe either (pipefail/PIPESTATUS aren't portable; a
           # mis-read exit could mask a real failure).
           #
-          # Output STREAMS now rather than being redirected to a file and dumped
-          # at the end — the file existed for the deleted classify step, and with
-          # the build hoisted out there is no longer a ~11-minute silent window
-          # to buffer. logcat goes to stdout too (tail-capped), so a failure
-          # needs no artifact download.
-          script: just e2e || { rc=$?; echo '--- logcat (last 2000 lines) ---'; adb logcat -d -t 2000; exit "$rc"; }
+          # REDIRECT TO A FILE, THEN DUMP. Do NOT "simplify" this to a plain
+          # `just e2e` that streams straight to the Actions log — #16 did
+          # exactly that, on the reasoning that the file only existed to feed
+          # the deleted classify step, and it KILLED the patrol apps.
+          #
+          # Proven by control experiment (2026-08-08): well-quill failed 3/3
+          # with streaming (31195967334, 31215728866, 31218579722, all ending
+          # `hanging thread 'QEMU2 ...'` -> `runner has received a shutdown
+          # signal`) and passed on the FIRST try with this redirect restored
+          # (31247153733, 0 hangs), on a byte-identical app.
+          #
+          # Why: patrol emits a continuous ANSI progress redraw (cursor-up +
+          # erase-line per step). Streaming it makes the runner timestamp,
+          # process and network-upload every one of those writes, continuously,
+          # on a 4-vCPU box already running QEMU. The deaths cluster during TEST
+          # EXECUTION -- peak output rate -- not during the build, and execution
+          # ran ~5x slower (2 flows in 163s vs all 8 in 173s). A file write is
+          # cheap; one `cat` afterwards is a single burst, not sustained
+          # contention.
+          #
+          # The plain-Flutter apps never showed this because their tests take
+          # ~3s and print almost nothing. Low output volume is why it looked
+          # safe when validated on cog-scroll.
+          #
+          # logcat still goes to stdout (tail-capped) so a failure needs no
+          # artifact download.
+          script: just e2e > e2e-output.txt 2>&1; rc=$?; cat e2e-output.txt; [ "$rc" -eq 0 ] || { echo '--- logcat (last 2000 lines) ---'; adb logcat -d -t 2000; }; exit "$rc"
