@@ -27,6 +27,12 @@ jobs:
       api-level: 31             # 33 for runtime-notification tests
       disk-size: "2G"           # "4G" for heavier (Patrol) builds
       install-patrol: false     # true for Patrol apps
+      # Patrol apps only. Must match the caller's `patrol` dep -- patrol_cli
+      # refuses a package version it doesn't support.
+      patrol-cli-version: "3.11.0"
+      # Patrol apps build INSIDE the emulator step (install-patrol skips the
+      # warm build), so they must pass 35. Keep it under `timeout-minutes`.
+      emulator-timeout-minutes: 12
       timeout-minutes: 20
 
 # .github/workflows/release.yml — Play Store deploy (AAB)
@@ -58,7 +64,7 @@ Each consuming app must expose the `just` recipes its chosen workflows call:
 | workflow | inputs | secrets |
 |----------|--------|---------|
 | `flutter-ci` | `smoke-build` (bool, false) | — |
-| `flutter-e2e` | `api-level` (31), `disk-size` ("2G"), `install-patrol` (false), `timeout-minutes` (20) | — |
+| `flutter-e2e` | `api-level` (31), `disk-size` ("2G"), `install-patrol` (false), `patrol-cli-version` ("3.11.0"), `emulator-timeout-minutes` (12), `timeout-minutes` (30), `flutter-version` ("") | — |
 | `flutter-release` | `track` ("internal"), `release-status` ("completed"), `flutter-version` (""), `release-notes-locale` ("en-GB") | `KEYSTORE_BASE64`, `STORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`, `PLAY_STORE_JSON_KEY` |
 | `flutter-release-apk` | `flutter-version` ("") | `KEYSTORE_BASE64`, `STORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`, `TMDB_API_KEY`, `TMDB_READ_TOKEN` (caller grants `contents: write`) |
 
