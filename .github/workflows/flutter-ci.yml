@@ -70,6 +70,19 @@ jobs:
       # literally `flutter build apk --debug --no-pub` with no flavours or
       # dart-defines, so a per-app recipe would be four identical files of churn.
       # Convert if an app ever needs flags.
+      #
+      # NO `--no-pub` HERE, unlike the debug smoke build above. Flutter strips
+      # DEV-dependency plugins from the release plugin registrant, and it does
+      # that during the plugin refresh that runs as part of pub get -- which
+      # `--no-pub` skips. Skip it and `GeneratedPluginRegistrant.java` keeps the
+      # entries from the last debug/E2E build, so the release compile fails with
+      # `package dev.flutter.plugins.integration_test does not exist` (and
+      # `pl.leancode.patrol` on the patrol apps). Reproduced on tasks-on-time and
+      # well-quill from a clean tree; both pass once the flag is dropped.
+      #
+      # It is safe on the debug build because debug KEEPS the dev-dependency
+      # plugins, so that registrant is already correct. The extra pub get costs
+      # seconds against a warm pub cache.
       - name: Release smoke build (unsigned release APK)
         if: inputs.release-smoke && github.event_name == 'push'
-        run: flutter build apk --release --no-pub
+        run: flutter build apk --release

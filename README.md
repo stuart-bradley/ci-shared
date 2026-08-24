@@ -187,8 +187,8 @@ no entry — the shrinker can see those on its own.
 
 ## The release smoke build (`flutter-ci`)
 
-`release-smoke: true` adds `flutter build apk --release --no-pub` — **unsigned,
-no secrets**, and **on push-to-main only**.
+`release-smoke: true` adds `flutter build apk --release` — **unsigned, no
+secrets**, and **on push-to-main only**.
 
 The release variant has a failure surface nothing else here touches:
 `lintVitalAnalyze`, R8/minification, resource shrinking, release-only manifest
@@ -206,3 +206,13 @@ after merge instead of at the next tag.
 It does **not** supersede the R8 resource check above: a release *build* cannot
 detect a stripped Dart-named resource, because nothing in the build exercises
 `Resources.getIdentifier`. The two are complementary.
+
+**No `--no-pub`, unlike the debug smoke build.** Flutter strips dev-dependency
+plugins from the *release* plugin registrant during the plugin refresh that runs
+as part of `pub get`, and `--no-pub` skips it. Skip it and
+`GeneratedPluginRegistrant.java` keeps the entries from the last debug or E2E
+build, so the release compile fails with `package
+dev.flutter.plugins.integration_test does not exist` (plus `pl.leancode.patrol`
+on the patrol apps) — a failure of the gate, not of the app. Reproduced on
+tasks-on-time and well-quill from a clean tree; both pass with the flag dropped.
+The debug build keeps `--no-pub` safely, because debug keeps those plugins.
