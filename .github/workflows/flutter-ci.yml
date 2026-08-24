@@ -62,9 +62,17 @@ jobs:
       # falls back to signingConfigs.debug when key.properties is absent.
       #
       # push-only, deliberately. GitHub has no per-job path filter, so on
-      # pull_request this would cost ~4 min on EVERY PR including doc-only ones.
-      # On push-to-main it costs nothing on PRs and still surfaces the breakage
+      # pull_request this would bill EVERY PR including doc-only ones -- and it
+      # is not cheap: MEASURED 671.5s (11.2 min) on tasks-on-time's first run
+      # (cold Gradle cache), not the ~4 min originally guessed. R8 and resource
+      # shrinking are the expensive part, and they are also the point. On
+      # push-to-main it costs nothing on PRs and still surfaces the breakage
       # minutes after merge rather than at the next tag.
+      #
+      # R8 really does run: Flutter's own Gradle plugin sets
+      # `releaseBuildType.isMinifyEnabled = true` (FlutterPlugin.kt), so the apps
+      # need no `isMinifyEnabled` of their own -- verified by r8_metadata,
+      # shrunk_resources_binary_format and mapping/release in the build output.
       #
       # A direct command, not a `just` recipe: all four apps' `build-debug` is
       # literally `flutter build apk --debug --no-pub` with no flavours or

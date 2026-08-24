@@ -199,9 +199,15 @@ v1.4.0, where `:in_app_purchase_android:lintVitalAnalyzeRelease` had been broken
 for 18 days because no release was cut in between.
 
 **push-only is deliberate.** GitHub has no per-job path filter, so on
-`pull_request` this would cost ~4 min on every PR including doc-only ones. On
-push-to-main it costs nothing on PRs and still surfaces the breakage minutes
-after merge instead of at the next tag.
+`pull_request` this would bill every PR including doc-only ones — and it is not
+cheap: **measured 671.5s (11.2 min)** on tasks-on-time's first run, against a
+cold Gradle cache. R8 and resource shrinking are the expensive part, and they are
+also the point. On push-to-main it costs nothing on PRs and still surfaces the
+breakage minutes after merge instead of at the next tag.
+
+R8 really does run without the apps configuring anything: Flutter's Gradle plugin
+sets `releaseBuildType.isMinifyEnabled = true` itself. Confirmed by `r8_metadata`,
+`shrunk_resources_binary_format` and `mapping/release` in the build output.
 
 It does **not** supersede the R8 resource check above: a release *build* cannot
 detect a stripped Dart-named resource, because nothing in the build exercises
