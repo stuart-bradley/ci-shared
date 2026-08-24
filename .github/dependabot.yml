@@ -1,10 +1,13 @@
 version: 2
 updates:
   - package-ecosystem: github-actions
-    # "/" only scans .github/workflows; composite actions need their own path
+    # "/" only scans .github/workflows; composite actions need their own path.
+    # A glob, not the one action that has an external `uses:` today: a new
+    # composite action would otherwise be added unwatched, and its pinned SHA
+    # would rot silently. Dependabot skips paths with nothing to update.
     directories:
       - /
-      - /.github/actions/setup-flutter
+      - /.github/actions/*
     schedule:
       interval: monthly
     groups:
