@@ -83,9 +83,22 @@ on:
         # expression: a `${{ … }}` result arrives as the STRING "false", which is
         # truthy, so `!inputs.install-patrol` would be false and the warm build
         # would silently come back for a patrol app.
-        description: "Patrol app: activate patrol_cli 3.11.0 and skip the warm build"
+        description: "Patrol app: activate patrol_cli and skip the warm build"
         type: boolean
         default: false
+      patrol-cli-version:
+        # patrol_cli DRIVES `patrol test`, and the CLI and the caller's `patrol`
+        # package version must match -- the CLI refuses a package it doesn't
+        # support (patrol_cli 4.7.0's own compatibility table maps `4.7.0+` to
+        # `patrol 4.9.0+`).
+        #
+        # Default 3.11.0 = the previously hardcoded value, so a caller that does
+        # not pass this is completely unaffected. That is deliberate: it lets
+        # each patrol repo move on its own schedule instead of forcing every
+        # consumer of the moving @v1 tag to migrate in lockstep.
+        description: "patrol_cli version (must match the caller's `patrol` dep)"
+        type: string
+        default: "3.11.0"
       emulator-timeout-minutes:
         # Ceiling for the emulator step alone. 12 suits the plain-Flutter apps,
         # where only a small residual Gradle run happens inside the emulator
@@ -103,10 +116,15 @@ on:
         # other, in every patrol caller.
         #
         # DO NOT rely on this step ceiling alone. It does NOT reliably fire on
-        # the emulator-runner step: on well-quill 31250470722 the step carried
-        # 35 and ran ~51 minutes without completing, and the JOB ceiling killed
-        # it -- losing the log. That is why the script itself is bounded (see
-        # the emulator step). Belt and braces, deliberately.
+        # the emulator-runner step: on well-quill 31250470722 the step ran ~51
+        # minutes without completing and the JOB ceiling killed it -- losing the
+        # log. That is why the script itself is bounded (see the emulator step).
+        # Belt and braces, deliberately.
+        #
+        # (Corrected via well-quill#129: that step carried the DEFAULT 12, not
+        # 35 -- well-quill had never set this input; `git log -S` on its caller
+        # returns nothing. The conclusion stands, and is arguably stronger: a
+        # 12-minute step ceiling let the step run ~51 minutes.)
         #
         # This value feeds BOTH ceilings, but they are measured from different
         # instants -- the step's from step start, the script's from a deadline
@@ -159,7 +177,7 @@ jobs:
       - name: Install patrol_cli
         if: inputs.install-patrol
         run: |
-          dart pub global activate patrol_cli 3.11.0
+          dart pub global activate patrol_cli '${{ inputs.patrol-cli-version }}'
           echo "$HOME/.pub-cache/bin" >> "$GITHUB_PATH"
 
       # setup-flutter does not run codegen; E2E has no `just check`, so the
