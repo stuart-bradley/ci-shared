@@ -18,6 +18,8 @@ jobs:
     uses: stuart-bradley/ci-shared/.github/workflows/flutter-ci.yml@v1
     with:
       smoke-build: false        # true to add a debug-APK compile check
+      release-smoke: false      # true to add an unsigned release APK build
+                                # (push-to-main only -- see below)
 
 # .github/workflows/e2e.yml
 jobs:
@@ -63,13 +65,19 @@ Each consuming app must expose the `just` recipes its chosen workflows call:
 
 | workflow | inputs | secrets |
 |----------|--------|---------|
-| `flutter-ci` | `smoke-build` (bool, false) | — |
+| `flutter-ci` | `smoke-build` (bool, false), `release-smoke` (bool, false), `flutter-version` ("") | — |
 | `flutter-e2e` | `api-level` (31), `disk-size` ("2G"), `install-patrol` (false), `patrol-cli-version` ("3.11.0"), `emulator-timeout-minutes` (12), `timeout-minutes` (30), `flutter-version` ("") | — |
 | `flutter-release` | `track` ("internal"), `release-status` ("completed"), `flutter-version` (""), `release-notes-locale` ("en-GB") | `KEYSTORE_BASE64`, `STORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`, `PLAY_STORE_JSON_KEY` |
 | `flutter-release-apk` | `flutter-version` ("") | `KEYSTORE_BASE64`, `STORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`, `TMDB_API_KEY`, `TMDB_READ_TOKEN` (caller grants `contents: write`) |
 
-Private cross-repo access is enabled on this repo
-(`actions/permissions/access` = `user`) so same-owner apps can reference it.
+This repo is **public**, so any of the apps can reference these workflows —
+public *and* private alike. That is why it is public: `actions/permissions/access`
+= `user` shares a reusable workflow only across *private* same-owner repos, so
+while this repo was private the public app (watch-nook) could not resolve it at
+all — its runs died as `startup_failure` with 0 jobs and no log, and it ended up
+vendoring a copy of the workflows instead. Making this repo public dissolved
+that; the API now rejects an access policy outright ("Access policy only applies
+to internal and private repositories").
 
 ## Pinning
 
@@ -176,3 +184,25 @@ So: add a Dart-referenced drawable ⇒ add it to `keep.xml` in the same change.
 The check is static (no build, seconds) and tells you exactly what to add. A
 resource the manifest or an XML already anchors (e.g. `@mipmap/ic_launcher`) needs
 no entry — the shrinker can see those on its own.
+
+## The release smoke build (`flutter-ci`)
+
+`release-smoke: true` adds `flutter build apk --release --no-pub` — **unsigned,
+no secrets**, and **on push-to-main only**.
+
+The release variant has a failure surface nothing else here touches:
+`lintVitalAnalyze`, R8/minification, resource shrinking, release-only manifest
+merging. `just check`, the debug smoke build and the E2E suite are all blind to
+it, so the first thing that exercises it is `git tag` — the worst possible
+moment. It has bitten twice: watch-nook's AGP 9.3.1 bump, and tasks-on-time
+v1.4.0, where `:in_app_purchase_android:lintVitalAnalyzeRelease` had been broken
+for 18 days because no release was cut in between.
+
+**push-only is deliberate.** GitHub has no per-job path filter, so on
+`pull_request` this would cost ~4 min on every PR including doc-only ones. On
+push-to-main it costs nothing on PRs and still surfaces the breakage minutes
+after merge instead of at the next tag.
+
+It does **not** supersede the R8 resource check above: a release *build* cannot
+detect a stripped Dart-named resource, because nothing in the build exercises
+`Resources.getIdentifier`. The two are complementary.

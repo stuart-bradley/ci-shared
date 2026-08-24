@@ -11,6 +11,10 @@ on:
         description: "Run `just build-debug` after check (Android compile smoke test)"
         type: boolean
         default: false
+      release-smoke:
+        description: "Build an unsigned release APK on push-to-main (release-only gates: lintVital, R8, resource shrinking)"
+        type: boolean
+        default: false
       flutter-version:
         description: "Exact Flutter version, overriding the shared pin in setup-flutter (empty = use the pin)"
         type: string
@@ -46,3 +50,26 @@ jobs:
       - name: Smoke build (debug APK)
         if: inputs.smoke-build
         run: just build-debug
+
+      # The release variant's whole failure surface -- lintVital, R8/minification,
+      # resource shrinking, release-only manifest merging -- is unexercised by
+      # `just check`, the debug smoke build and E2E alike, so it first fails at
+      # tag time. It did, twice: watch-nook's AGP 9.3.1 bump (#28) and
+      # tasks-on-time v1.4.0's `lintVitalAnalyzeRelease` crash (see the JDK pin
+      # in setup-flutter, which went unseen for 18 days for exactly this reason).
+      #
+      # UNSIGNED, and needs no secrets: the apps' android/app/build.gradle.kts
+      # falls back to signingConfigs.debug when key.properties is absent.
+      #
+      # push-only, deliberately. GitHub has no per-job path filter, so on
+      # pull_request this would cost ~4 min on EVERY PR including doc-only ones.
+      # On push-to-main it costs nothing on PRs and still surfaces the breakage
+      # minutes after merge rather than at the next tag.
+      #
+      # A direct command, not a `just` recipe: all four apps' `build-debug` is
+      # literally `flutter build apk --debug --no-pub` with no flavours or
+      # dart-defines, so a per-app recipe would be four identical files of churn.
+      # Convert if an app ever needs flags.
+      - name: Release smoke build (unsigned release APK)
+        if: inputs.release-smoke && github.event_name == 'push'
+        run: flutter build apk --release --no-pub

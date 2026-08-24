@@ -52,6 +52,12 @@ name: Flutter E2E
 # unthrottled where the build owns the runner, throttled where it shares it
 # with QEMU. Both halves are load-bearing -- do not delete either.
 #
+# THE THROTTLE ONLY BINDS A DAEMON THAT DOES NOT YET EXIST. gradle.properties is
+# read when a daemon STARTS; the warm build's daemon is already running with the
+# app's -Xmx8G by then, and Gradle keeps it alive for hours. So the warm build's
+# daemon must be KILLED, not reconfigured -- see "Stop the warm build's Gradle
+# daemon". Three halves, then. All three are load-bearing.
+#
 # For the plain-Flutter apps `just e2e-build` is not extra work: `just e2e` runs
 # the same Gradle task and finds it largely up to date. Hold it to the CI
 # numbers, not the local ones — the residual assembleDebug measures ~2.9 min on
@@ -241,6 +247,25 @@ jobs:
       # So: unthrottled where it is the only workload, throttled where it shares
       # a 4-vCPU runner with QEMU. ~/.gradle/gradle.properties overrides the
       # app's android/gradle.properties.
+      # Kill the warm build's daemon before QEMU boots. `just e2e-build` runs
+      # UNTHROTTLED (that is the point -- it owns the runner), so its daemon is
+      # started with the app's -Xmx8G. The gradle.properties written by the next
+      # step cannot retrofit that: a running daemon reads it only at startup, and
+      # the new JVM args make that daemon INCOMPATIBLE -- so the residual build
+      # spawns a SECOND daemon while the first is still resident holding its heap
+      # (4.19G in the #22 sample), and QEMU boots into what is left.
+      #
+      # The evidence is the split by app shape: every remaining infra death is on
+      # a plain-Flutter app, i.e. one that runs the warm build. The two patrol
+      # apps skip it (install-patrol) and are 23-for-23 clean.
+      #
+      # pkill, not `./gradlew --stop`: the working directory here is the app root
+      # and there is no wrapper on the path, and pkill also catches the Kotlin
+      # compile daemon's sibling JVM. `|| true` because pkill exits 1 when nothing
+      # matched, which is the normal patrol case.
+      - name: Stop the warm build's Gradle daemon
+        run: pkill -f GradleDaemon || true
+
       - name: Constrain Gradle inside the emulator window
         run: |
           mkdir -p ~/.gradle
