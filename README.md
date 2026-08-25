@@ -187,8 +187,8 @@ no entry — the shrinker can see those on its own.
 
 ## The release smoke build (`flutter-ci`)
 
-`release-smoke: true` adds `flutter build apk --release` — **unsigned, no
-secrets**, and **on push-to-main only**.
+`release-smoke: true` adds `flutter build apk --release --target-platform
+android-arm64` — **unsigned, no secrets**, and **on push-to-main only**.
 
 The release variant has a failure surface nothing else here touches:
 `lintVitalAnalyze`, R8/minification, resource shrinking, release-only manifest
@@ -208,6 +208,16 @@ breakage minutes after merge instead of at the next tag.
 R8 really does run without the apps configuring anything: Flutter's Gradle plugin
 sets `releaseBuildType.isMinifyEnabled = true` itself. Confirmed by `r8_metadata`,
 `shrunk_resources_binary_format` and `mapping/release` in the build output.
+
+**One ABI, not the default three.** Every gate this step exists for is
+*variant*-scoped, not *ABI*-scoped, so building arm + arm64 + x64 re-runs
+gen_snapshot AOT over the whole Dart program for no additional signal. It
+narrows the Dart AOT, not the whole APK — plugin AARs still ship their own
+prebuilt `.so`, so `armeabi-v7a` is still present. Verified on tasks-on-time:
+26.2MB against 64.1MB fat, still producing `mapping/release`, `r8_metadata` and
+`shrunk_resources_binary_format`. The shipped artifact is unaffected — `just
+release-apk-ci` at tag time still builds the full fat APK, so per-ABI coverage
+moves off the every-push path rather than disappearing.
 
 It does **not** supersede the R8 resource check above: a release *build* cannot
 detect a stripped Dart-named resource, because nothing in the build exercises

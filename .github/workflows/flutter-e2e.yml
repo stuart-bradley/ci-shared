@@ -53,10 +53,12 @@ name: Flutter E2E
 # with QEMU. Both halves are load-bearing -- do not delete either.
 #
 # THE THROTTLE ONLY BINDS A DAEMON THAT DOES NOT YET EXIST. gradle.properties is
-# read when a daemon STARTS; the warm build's daemon is already running with the
-# app's -Xmx8G by then, and Gradle keeps it alive for hours. So the warm build's
-# daemon must be KILLED, not reconfigured -- see "Stop the warm build's Gradle
-# daemon". Three halves, then. All three are load-bearing.
+# read when a daemon STARTS; the warm build's daemons are already running with
+# the app's -Xmx8G by then, and Gradle keeps them alive for hours. So they must
+# be KILLED, not reconfigured -- see "Stop the warm build's Gradle and Kotlin
+# daemons". BOTH of them: Gradle and Kotlin run separate JVMs with different main
+# classes, and matching only the Gradle one left ~845M resident. Three halves,
+# then. All three are load-bearing.
 #
 # For the plain-Flutter apps `just e2e-build` is not extra work: `just e2e` runs
 # the same Gradle task and finds it largely up to date. Hold it to the CI
@@ -220,6 +222,53 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
+      # Kill the build daemons the warm build left running, before QEMU boots.
+      # `just e2e-build` runs UNTHROTTLED (that is the point -- it owns the
+      # runner), so its daemons start with the app's -Xmx8G. The gradle.properties
+      # written by the NEXT step cannot retrofit them: a daemon reads that file
+      # only at STARTUP, and the new JVM args make the running one INCOMPATIBLE --
+      # so the residual build spawns a SECOND daemon while the first is still
+      # resident holding its heap (4.19G in the #22 sample), and QEMU boots into
+      # what is left.
+      #
+      # TWO daemons, two DIFFERENT main classes -- one pattern does not cover
+      # both, and an earlier version of this step wrongly claimed it did:
+      #   Gradle: org.gradle.launcher.daemon.bootstrap.GradleDaemon
+      #   Kotlin: org.jetbrains.kotlin.daemon.KotlinCompileDaemon
+      # `pkill -f` is a case-sensitive ERE over the whole command line, and
+      # "GradleDaemon" is not a substring of the Kotlin one, so matching only
+      # GradleDaemon left the Kotlin daemon resident -- the very 845M JVM the
+      # next step's `kotlin.daemon.jvmargs` line calls out, and which is equally
+      # unable to pick up that cap once it is already running. Keep this
+      # alternation and that cap in step.
+      #
+      # pkill, not `./gradlew --stop`: the working directory here is the app root
+      # and there is no wrapper on the path.
+      #
+      # SIGTERM is asynchronous -- pkill returns before the JVM has unwound and
+      # released its heap -- so wait for the processes to actually go, then
+      # escalate. Without the wait, QEMU can boot while 4G is still held.
+      #
+      # The echoes are deliberate, matching the `cat ~/.gradle/gradle.properties`
+      # convention in the next step: `|| true` makes this step incapable of
+      # failing, so without them a silently-non-matching pattern is
+      # indistinguishable from the normal patrol case (no daemon to kill) until
+      # the next hang.
+      - name: Stop the warm build's Gradle and Kotlin daemons
+        run: |
+          pattern='GradleDaemon|KotlinCompileDaemon'
+          echo "--- build daemons before ---"
+          pgrep -af "$pattern" || echo "(none running -- expected for patrol apps)"
+          pkill -f "$pattern" || true
+          for _ in $(seq 15); do
+            pgrep -f "$pattern" >/dev/null || break
+            sleep 1
+          done
+          pkill -9 -f "$pattern" || true
+          echo "--- build daemons after ---"
+          pgrep -af "$pattern" || echo "(none)"
+          free -m
+
       # Throttle Gradle for whatever still builds inside the emulator window.
       # For the plain-Flutter apps that is the RESIDUAL only -- `just e2e-build`
       # above already ran unthrottled with the whole runner to itself. For patrol
@@ -247,25 +296,9 @@ jobs:
       # So: unthrottled where it is the only workload, throttled where it shares
       # a 4-vCPU runner with QEMU. ~/.gradle/gradle.properties overrides the
       # app's android/gradle.properties.
-      # Kill the warm build's daemon before QEMU boots. `just e2e-build` runs
-      # UNTHROTTLED (that is the point -- it owns the runner), so its daemon is
-      # started with the app's -Xmx8G. The gradle.properties written by the next
-      # step cannot retrofit that: a running daemon reads it only at startup, and
-      # the new JVM args make that daemon INCOMPATIBLE -- so the residual build
-      # spawns a SECOND daemon while the first is still resident holding its heap
-      # (4.19G in the #22 sample), and QEMU boots into what is left.
       #
-      # The evidence is the split by app shape: every remaining infra death is on
-      # a plain-Flutter app, i.e. one that runs the warm build. The two patrol
-      # apps skip it (install-patrol) and are 23-for-23 clean.
-      #
-      # pkill, not `./gradlew --stop`: the working directory here is the app root
-      # and there is no wrapper on the path, and pkill also catches the Kotlin
-      # compile daemon's sibling JVM. `|| true` because pkill exits 1 when nothing
-      # matched, which is the normal patrol case.
-      - name: Stop the warm build's Gradle daemon
-        run: pkill -f GradleDaemon || true
-
+      # BUT A RUNNING DAEMON NEVER READS IT -- see the kill step above, which is
+      # why that step has to exist at all.
       - name: Constrain Gradle inside the emulator window
         run: |
           mkdir -p ~/.gradle

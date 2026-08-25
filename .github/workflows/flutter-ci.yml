@@ -74,10 +74,35 @@ jobs:
       # need no `isMinifyEnabled` of their own -- verified by r8_metadata,
       # shrunk_resources_binary_format and mapping/release in the build output.
       #
-      # A direct command, not a `just` recipe: all four apps' `build-debug` is
-      # literally `flutter build apk --debug --no-pub` with no flavours or
-      # dart-defines, so a per-app recipe would be four identical files of churn.
-      # Convert if an app ever needs flags.
+      # A direct command, not a `just` recipe. THREE of the four apps' `build-debug`
+      # is literally `flutter build apk --debug --no-pub`; watch-nook's is a bash
+      # recipe that appends `--dart-define-from-file=secrets.json` when that file
+      # exists, and it degrades to the plain command here only because CI never
+      # writes secrets.json for a non-release build. So a per-app recipe would be
+      # mostly identical files of churn today -- but that is a coincidence, not an
+      # invariant. THE TRIPWIRE: the moment any app's RELEASE build needs a flag
+      # (a dart-define, a flavour), this must become a `just release-smoke`
+      # recipe, exactly as `e2e-build` is owned by the apps.
+      #
+      # --target-platform android-arm64 rather than the default (arm + arm64 +
+      # x64). Every gate this step exists for -- lintVitalAnalyze, R8/minification,
+      # resource shrinking, release manifest merging -- is VARIANT-scoped, not
+      # ABI-scoped, so the extra ABIs re-run gen_snapshot AOT over the whole Dart
+      # program for no additional signal.
+      #
+      # It narrows the DART AOT, not the whole APK: plugin AARs still ship their
+      # own prebuilt .so, so the artifact still contains armeabi-v7a. Verified on
+      # tasks-on-time -- the arm64 build is 26.2MB against 64.1MB fat, and still
+      # produces mapping/release, r8_metadata and shrunk_resources_binary_format,
+      # i.e. every gate above genuinely ran.
+      #
+      # Expect a large saving against the 671.5s fat measurement, but the CI
+      # number is not in yet -- record it here once a push-to-main run has one,
+      # rather than quoting the local 3m38s, which has a warm cache.
+      #
+      # The shipped artifact is unaffected: `just release-apk-ci` at tag time
+      # still builds the full fat APK, so per-ABI coverage moves off the
+      # every-push path rather than disappearing.
       #
       # NO `--no-pub` HERE, unlike the debug smoke build above. Flutter strips
       # DEV-dependency plugins from the release plugin registrant, and it does
@@ -93,4 +118,4 @@ jobs:
       # seconds against a warm pub cache.
       - name: Release smoke build (unsigned release APK)
         if: inputs.release-smoke && github.event_name == 'push'
-        run: flutter build apk --release
+        run: flutter build apk --release --target-platform android-arm64
