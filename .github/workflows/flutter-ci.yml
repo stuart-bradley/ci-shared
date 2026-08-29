@@ -19,6 +19,20 @@ on:
         description: "Exact Flutter version, overriding the shared pin in setup-flutter (empty = use the pin)"
         type: string
         default: ""
+      coverage:
+        # Runs `just check-coverage` INSTEAD of `just check`, so the suite runs
+        # once, not twice. A separate coverage job would re-pay checkout,
+        # free-disk-space, setup-flutter, pub get AND codegen (.g.dart is
+        # gitignored) before repeating the whole test run — several minutes per
+        # PR, in every caller, to re-run tests this job already ran.
+        #
+        # Defaults false so existing callers (watch-nook et al.) are unaffected
+        # by the `v1` re-tag until they opt in. A caller that sets this true
+        # MUST define a `check-coverage` recipe or the step dies on "Justfile
+        # does not contain recipe".
+        description: "Run `just check-coverage` in place of `just check` (collects coverage + enforces the repo's floor)"
+        type: boolean
+        default: false
 
 jobs:
   check:
@@ -44,8 +58,18 @@ jobs:
       # cannot see (R8 strips Dart-only resources; debug builds aren't shrunk).
       - uses: stuart-bradley/ci-shared/.github/actions/verify-dart-resources@v1
 
+      # Exactly one of these runs. Both conditions are written as explicit
+      # `== true` / `!= true` rather than `inputs.coverage` / `!inputs.coverage`
+      # so a value that arrives as the STRING "false" (truthy in an expression —
+      # the trap documented on flutter-e2e.yml's install-patrol) degrades to
+      # "run the plain check", never to "run neither".
       - name: Check
+        if: inputs.coverage != true
         run: just check
+
+      - name: Check (with coverage)
+        if: inputs.coverage == true
+        run: just check-coverage
 
       - name: Smoke build (debug APK)
         if: inputs.smoke-build
