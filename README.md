@@ -20,6 +20,8 @@ jobs:
       smoke-build: false        # true to add a debug-APK compile check
       release-smoke: false      # true to add an unsigned release APK build
                                 # (push-to-main only -- see below)
+      coverage: false           # true to run `just check-coverage` INSTEAD of
+                                # `just check` -- see below
 
 # .github/workflows/e2e.yml
 jobs:
@@ -59,13 +61,14 @@ jobs:
 
 Each consuming app must expose the `just` recipes its chosen workflows call:
 `lint-scripts`, `check`, `codegen`, `build-debug`, `e2e`, plus `release-ci`
-(Play deploy) or `release-apk-ci` (GitHub-Releases APK).
+(Play deploy) or `release-apk-ci` (GitHub-Releases APK). An app that sets
+`coverage: true` must also expose `check-coverage` (see below).
 
 ## Contract
 
 | workflow | inputs | secrets |
 |----------|--------|---------|
-| `flutter-ci` | `smoke-build` (bool, false), `release-smoke` (bool, false), `flutter-version` ("") | — |
+| `flutter-ci` | `smoke-build` (bool, false), `release-smoke` (bool, false), `flutter-version` (""), `coverage` (bool, false) | — |
 | `flutter-e2e` | `api-level` (31), `disk-size` ("2G"), `install-patrol` (false), `patrol-cli-version` ("3.11.0"), `emulator-timeout-minutes` (12), `timeout-minutes` (30), `flutter-version` ("") | — |
 | `flutter-release` | `track` ("internal"), `release-status` ("completed"), `flutter-version` (""), `release-notes-locale` ("en-GB") | `KEYSTORE_BASE64`, `STORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`, `PLAY_STORE_JSON_KEY` |
 | `flutter-release-apk` | `flutter-version` ("") | `KEYSTORE_BASE64`, `STORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`, `TMDB_API_KEY`, `TMDB_READ_TOKEN` (caller grants `contents: write`) |
@@ -161,6 +164,28 @@ with no numeric `+N`): a missing note is not worth failing a release over when
 At version-bump time, rename `## Unreleased` to the new `## x.y.z+N` and open a
 fresh `## Unreleased` — that keeps an accurate per-version history in the repo.
 
+
+## The coverage gate (`flutter-ci`)
+
+`coverage: true` runs `just check-coverage` **instead of** `just check`, so the
+test suite runs once rather than twice.
+
+**`check-coverage` must be a superset of `check`** — codegen + analyze +
+format-check + tests, with coverage collection and the floor added. Nothing here
+can enforce that, because the recipe lives in the caller's justfile, so it is a
+contract: an app that writes `check-coverage` as tests-plus-coverage alone
+silently loses analyze and format-check on every PR, with a green job.
+
+Why an input rather than a step in each app's `ci.yml`: callers invoke this as a
+reusable workflow (`uses:`), and GitHub forbids `steps:` in a job that has
+`uses:`. A standalone coverage job would instead re-pay checkout,
+free-disk-space, setup-flutter, `pub get` **and `just codegen`** (`.g.dart` is
+gitignored) before repeating the whole test run.
+
+Pass a literal `true`/`false` where you can. Both string and boolean forms are
+handled (the two step conditions are strict complements accepting either), but
+the naive `== true` spelling silently skips coverage for a `${{ … }}`-passed
+value — see the comment above the steps for why.
 
 ## The R8 resource check (`flutter-ci`)
 

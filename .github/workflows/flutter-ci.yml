@@ -4,6 +4,13 @@ name: Flutter CI
 # (codegen + analyze + format-check + unit/widget tests), and optionally a
 # debug-APK smoke build. Callers keep their own push/pull_request triggers and
 # concurrency.
+#
+# With `coverage: true` the check step runs `just check-coverage` INSTEAD, so
+# that recipe MUST be a superset of `check` — codegen + analyze + format-check
+# + tests, with coverage collection and the floor added. Nothing here can
+# enforce that (the recipe lives in the caller's justfile), so it is stated as
+# a contract: an app that writes `check-coverage` as tests-plus-coverage alone
+# would silently lose analyze and format-check on every PR, with a green job.
 on:
   workflow_call:
     inputs:
@@ -28,8 +35,10 @@ on:
         #
         # Defaults false so existing callers (watch-nook et al.) are unaffected
         # by the `v1` re-tag until they opt in. A caller that sets this true
-        # MUST define a `check-coverage` recipe or the step dies on "Justfile
-        # does not contain recipe".
+        # MUST define a `check-coverage` recipe, and it must be a SUPERSET of
+        # `check` (see the file header) — otherwise the step either dies on
+        # "Justfile does not contain recipe", or worse, quietly runs fewer
+        # gates than `check` did.
         description: "Run `just check-coverage` in place of `just check` (collects coverage + enforces the repo's floor)"
         type: boolean
         default: false
@@ -58,17 +67,31 @@ jobs:
       # cannot see (R8 strips Dart-only resources; debug builds aren't shrunk).
       - uses: stuart-bradley/ci-shared/.github/actions/verify-dart-resources@v1
 
-      # Exactly one of these runs. Both conditions are written as explicit
-      # `== true` / `!= true` rather than `inputs.coverage` / `!inputs.coverage`
-      # so a value that arrives as the STRING "false" (truthy in an expression —
-      # the trap documented on flutter-e2e.yml's install-patrol) degrades to
-      # "run the plain check", never to "run neither".
+      # Exactly one of these runs, for EVERY input shape. The two conditions are
+      # strict complements of one expression, deliberately — the obvious
+      # `inputs.coverage` / `!inputs.coverage` pair is wrong in one direction and
+      # the tempting `== true` / `!= true` pair is wrong in the other:
+      #
+      #   * A `type: boolean` workflow_call input passed as `${{ … }}` arrives as
+      #     a STRING, not a boolean (the trap already documented on
+      #     flutter-e2e.yml's install-patrol).
+      #   * `!inputs.coverage` mishandles the string "false", which is truthy.
+      #   * `== true` mishandles the string "true": GitHub coerces mismatched
+      #     operand types to Number, so `true` -> 1 and `"true"` -> NaN, and every
+      #     NaN comparison is false. `"true" == true` is FALSE and
+      #     `"true" != true` is TRUE, so a caller writing
+      #     `coverage: ${{ github.event_name == 'pull_request' }}` would run the
+      #     plain check and SILENTLY SKIP the coverage floor — green job, gate
+      #     not enforced, no warning. That is the dangerous direction.
+      #
+      # Accepting both shapes explicitly makes every value land on exactly one
+      # branch, so no caller spelling can disable the gate or skip both steps.
       - name: Check
-        if: inputs.coverage != true
+        if: ${{ !(inputs.coverage == true || inputs.coverage == 'true') }}
         run: just check
 
       - name: Check (with coverage)
-        if: inputs.coverage == true
+        if: ${{ inputs.coverage == true || inputs.coverage == 'true' }}
         run: just check-coverage
 
       - name: Smoke build (debug APK)
