@@ -56,6 +56,28 @@ jobs:
       # must run first, unconditionally, not gated to the smoke build.
       - uses: stuart-bradley/ci-shared/.github/actions/free-disk-space@v1
 
+      # Validate the Play "What's new" text BEFORE the expensive steps, so an
+      # over-long section fails in seconds rather than at tag time — which is
+      # where it used to fail, after the PR had already merged.
+      #
+      # This checks the section pubspec.yaml's `version:` points at, so it is
+      # the VERSION-BUMP PR where it bites: that PR is the first time the
+      # about-to-ship section is the selected one. On an ordinary feature PR it
+      # re-checks the last released section, which always passes.
+      #
+      # Deliberately NOT a check of `## Unreleased` on every PR: bullets land
+      # there one PR at a time and only become a release when the bump PR
+      # renames the heading, which this already gates. The ceiling: an
+      # Unreleased section can still grow past 500 chars unnoticed, and the
+      # bump PR is where you find out. Pass a section override here if that
+      # ever costs more than it saves.
+      #
+      # Cannot catch the OTHER half of the trap — an EMPTY section warns and
+      # silently ships default.txt (exit 0 by design, so a missing note never
+      # fails a release). Nothing here can tell "deliberately no notes" from
+      # "forgot the notes".
+      - uses: stuart-bradley/ci-shared/.github/actions/play-release-notes@v1
+
       - uses: stuart-bradley/ci-shared/.github/actions/setup-flutter@v1
         with:
           flutter-version: ${{ inputs.flutter-version }}
